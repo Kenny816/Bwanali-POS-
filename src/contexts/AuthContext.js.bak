@@ -1,0 +1,214 @@
+import React,{createContext,useContext,useState,useEffect,useCallback,useRef} from 'react';
+import {supabase} from '../lib/supabase';
+import {getUserFriendlyError} from '../lib/errorHandler';
+import toast from 'react-hot-toast';
+
+const AuthContext = createContext();
+
+export function AuthProvider({children}) {
+  const [user, setUser] = useState(null);
+  const [staff, setStaff] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [needsPinSetup, setNeedsPinSetup] = useState(false);
+  const [activeStoreId, setActiveStoreId] = useState(null);
+  const [availableStores, setAvailableStores] = useState([]);
+  const [subscriptionStatus, setSubscriptionStatus] = useState(null);
+  const [trialDaysLeft, setTrialDaysLeft] = useState(null);
+  const [isLocked, setIsLocked] = useState(false);
+  
+  const loadingRef = useRef(false);
+  const timeoutRef = useRef(null);
+
+  const checkSubscription = useCallback(async (sid) => {
+    if (!sid) return;
+    const { data: store } = await supabase.from('stores')
+      .select('subscription_status,trial_started_at,locked').eq('id',sid).single();
+    if (store) {
+      setIsLocked(store.locked || false);
+      setSubscriptionStatus(store.subscription_status);
+      if (store.subscription_status === 'trialing' && store.trial_started_at) {
+        const end = new Date(store.trial_started_at);
+        end.setDate(end.getDate() + 3);
+        const left = Math.max(0, Math.ceil((end - new Date()) / 86400000));
+        setTrialDaysLeft(left);
+        if (left === 0) {
+          await supabase.from('stores').update({subscription_status:'expired',locked:true}).eq('id',sid);
+          setIsLocked(true);
+          setSubscriptionStatus('expired');
+        }
+      }
+    }
+  }, []);
+
+  const loadAvailableStores = useCallback(async (uid) => {
+    try {
+      const { data: adminStores } = await supabase
+        .from('store_admins')
+        .select('store:stores(id,name,subscription_status,locked)')
+        .eq('user_id',uid);
+      
+      const { data: staffStores } = await supabase
+        .from('staff')
+        .select('store:stores(id,name,subscription_status,locked), role')
+        .eq('user_id',uid)
+        .eq('is_active',true);
+      
+      const stores = [];
+      adminStores?.forEach(i => stores.push({...i.store, role: 'admin'}));
+      staffStores?.forEach(i => stores.push({...i.store, role: i.role}));
+      
+      return Array.from(new Map(stores.map(s => [s.id, s])).values());
+    } catch (err) {
+      return [];
+    }
+  }, []);
+
+  const loadUserData = useCallback(async (uid) => {
+    if (!uid) return;
+    
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      if (loading) {
+        setLoading(false);
+        toast.error('Network timeout. Please refresh.');
+      }
+    }, 8000);
+    
+    try {
+      const stores = await loadAvailableStores(uid);
+      setAvailableStores(stores);
+      
+      if (!stores.length) {
+        // No stores – user might be pending email confirmation
+        setStaff({ full_name: user?.user_metadata?.full_name || 'User', email: user?.email, role: 'pending', store: null, store_id: null, is_active: true });
+        setActiveStoreId(null);
+        setSubscriptionStatus('pending'); // Prevent trial expired screen
+        clearTimeout(timeoutRef.current);
+        setLoading(false);
+        return;
+      }
+
+      const saved = localStorage.getItem(`activeStore_${uid}`);
+      const sid = (saved && stores.find(s => s.id === saved)) ? saved : stores[0].id;
+      if (!saved) localStorage.setItem(`activeStore_${uid}`, sid);
+      
+      let { data: sData } = await supabase.from('staff')
+        .select('*,store:stores(id,name,subscription_status,locked)')
+        .eq('user_id',uid).eq('store_id',sid).maybeSingle();
+      
+      if (!sData) {
+        const isStoreAdmin = stores.some(s => s.id === sid && s.role === 'admin');
+        const storeInfo = stores.find(s => s.id === sid);
+        if (isStoreAdmin && storeInfo) {
+          sData = {
+            id: null,
+            full_name: user?.user_metadata?.full_name || 'Owner',
+            email: user?.email,
+            role: 'admin',
+            store: storeInfo,
+            store_id: sid,
+            is_active: true,
+            pin_code: null
+          };
+        }
+      }
+      
+      if (sData) {
+        if (!sData.is_active) {
+          toast.error('Account disabled');
+          setStaff(null);
+        } else {
+          const isStoreAdmin = stores.some(s => s.id === sid && s.role === 'admin');
+          const finalRole = isStoreAdmin ? 'admin' : sData.role;
+          setStaff({...sData, role: finalRole});
+          await checkSubscription(sid);
+          
+          const pinDefault = !sData.pin_code || sData.pin_code === '1234';
+          const shown = localStorage.getItem(`pin_prompt_shown_${uid}_${sid}`);
+          setNeedsPinSetup(pinDefault && !shown);
+        }
+      } else {
+        toast.error('No profile found');
+        setStaff(null);
+      }
+      
+      setActiveStoreId(sid);
+    } catch (err) {
+      console.error('Load user data error:', err);
+      toast.error('Failed to load profile');
+    } finally {
+      clearTimeout(timeoutRef.current);
+      setLoading(false);
+    }
+  }, [loadAvailableStores, checkSubscription, user, loading]);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        loadUserData(session.user.id);
+      } else {
+        setLoading(false);
+      }
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        loadUserData(session.user.id);
+      } else {
+        setStaff(null);
+        setActiveStoreId(null);
+        setAvailableStores([]);
+        setLoading(false);
+      }
+    });
+
+    return () => listener?.subscription.unsubscribe();
+  }, [loadUserData]);
+
+  const signIn = async (email, password) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      toast.error(getUserFriendlyError(error));
+      return { error };
+    }
+    toast.success('Welcome!');
+    return {};
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setStaff(null);
+    setActiveStoreId(null);
+    setAvailableStores([]);
+  };
+
+  const isAdmin = staff?.role === 'admin';
+  const isManager = staff?.role === 'manager' || isAdmin;
+  const hasActive = subscriptionStatus === 'active' || (subscriptionStatus === 'trialing' && !isLocked);
+
+  const value = {
+    user, staff, setStaff, storeId: activeStoreId, availableStores,
+    switchStore: async (sid) => {
+      if (!user?.id) return;
+      setLoading(true);
+      localStorage.setItem(`activeStore_${user.id}`, sid);
+      await loadUserData(user.id);
+      toast.success('Store switched');
+    },
+    signIn, signOut, loading, needsPinSetup, reloadStaff: () => loadUserData(user?.id),
+    isAdmin, isManager, canManageInventory: isManager, canDelete: isAdmin,
+    markPinPromptAsShown: () => {
+      if (user?.id && activeStoreId) {
+        localStorage.setItem(`pin_prompt_shown_${user.id}_${activeStoreId}`, 'true');
+      }
+    },
+    subscriptionStatus, trialDaysLeft, hasActiveSubscription: hasActive, isLocked, checkSubscription
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export const useAuth = () => useContext(AuthContext);

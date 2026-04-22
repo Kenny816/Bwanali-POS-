@@ -1,0 +1,1 @@
+export function getUserFriendlyError(e){const m=(e?.message||e||"").toString();if(m.includes("fetch"))return"Network error.";if(m.includes("Invalid login"))return"Incorrect email or password.";if(e?.code==="23505")return"Duplicate entry.";return m;}
