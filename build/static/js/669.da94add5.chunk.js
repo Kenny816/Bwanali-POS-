@@ -1,2 +1,0 @@
-"use strict";(globalThis.webpackChunkbwanali_pos=globalThis.webpackChunkbwanali_pos||[]).push([[669],{2669(a,t,r){async function e(a,t){try{return await navigator.locks.request(a,t)}catch(r){if("AbortError"===r.name)return await new Promise(a=>setTimeout(a,50)),navigator.locks.request(a,t);throw r}}r.d(t,{safeLock:()=>e})}}]);
-//# sourceMappingURL=669.da94add5.chunk.js.map
