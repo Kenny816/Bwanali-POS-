@@ -1,13 +1,286 @@
-import React,{useState,useEffect,useCallback} from 'react';import {supabase} from '../lib/supabase';import {useAuth} from '../contexts/AuthContext';import toast from 'react-hot-toast';import {Package,Plus,Edit2,X,Search,Camera,Eye,Download} from 'lucide-react';import BarcodeScanner from '../components/BarcodeScanner';
-export default function Inventory(){const {storeId,canManageInventory}=useAuth();const [products,setProducts]=useState([]);const [loading,setLoading]=useState(true);const [searchTerm,setSearchTerm]=useState('');const [showModal,setShowModal]=useState(false);const [editing,setEditing]=useState(null);const [showScanner,setShowScanner]=useState(false);const [companySettings,setCompanySettings]=useState({hardware_scanner:'camera',currency_symbol:'K'});const [form,setForm]=useState({name:'',barcode:'',category:'',unit_price:'',cost_price:'',stock_quantity:'',discount_percent:'0',expiry_date:'',is_active:true});const [previewProduct,setPreviewProduct]=useState(null);
-const loadProducts=useCallback(async()=>{if(!storeId)return;const {data}=await supabase.from('products').select('*').eq('store_id',storeId).order('name');setProducts(data||[]);setLoading(false);},[storeId]);
-useEffect(()=>{if(storeId){loadProducts();supabase.from('company_settings').select('hardware_scanner,currency_symbol').eq('store_id',storeId).single().then(({data})=>{if(data)setCompanySettings(data);});}},[storeId,loadProducts]);
-const handleScan=(barcode)=>{setForm({...form,barcode});setShowScanner(false);toast.success(`Barcode: ${barcode}`);};
-const handleSubmit=async e=>{e.preventDefault();if(!canManageInventory)return toast.error('Permission denied');try{const payload={...form,unit_price:parseFloat(form.unit_price)||0,cost_price:parseFloat(form.cost_price)||0,stock_quantity:parseInt(form.stock_quantity)||0,discount_percent:parseFloat(form.discount_percent)||0,store_id:storeId,expiry_date:form.expiry_date||null};if(editing){await supabase.from('products').update(payload).eq('id',editing.id);toast.success('Product updated');}else{await supabase.from('products').insert(payload);toast.success('Product added');}setShowModal(false);setEditing(null);resetForm();loadProducts();}catch(err){toast.error(err.message);}};
-const toggleProductActive=async(product)=>{if(!canManageInventory)return;const newStatus=!product.is_active;const {error}=await supabase.from('products').update({is_active:newStatus}).eq('id',product.id);if(error)toast.error(error.message);else{toast.success(`Product ${newStatus?'activated':'deactivated'}`);loadProducts();}};
-const downloadProductList=()=>{const headers=['Name','Barcode','Category','Cost','Price','Stock','Active'];const rows=products.map(p=>[p.name,p.barcode||'',p.category||'',p.cost_price||0,p.unit_price,p.stock_quantity,p.is_active?'Yes':'No']);const csv=[headers,...rows].map(r=>r.join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`inventory_${new Date().toISOString().split('T')[0]}.csv`;a.click();URL.revokeObjectURL(url);};
-const resetForm=()=>setForm({name:'',barcode:'',category:'',unit_price:'',cost_price:'',stock_quantity:'',discount_percent:'0',expiry_date:'',is_active:true});
-const openEdit=p=>{setEditing(p);setForm({name:p.name,barcode:p.barcode||'',category:p.category||'',unit_price:p.unit_price,cost_price:p.cost_price||0,stock_quantity:p.stock_quantity,discount_percent:p.discount_percent||'0',expiry_date:p.expiry_date||'',is_active:p.is_active});setShowModal(true);};
-const filtered=products.filter(p=>p.name?.toLowerCase().includes(searchTerm.toLowerCase())||p.barcode?.includes(searchTerm));
-if(loading)return<div className="p-8 text-center">Loading inventory...</div>;
-return(<div className="p-4 h-full overflow-y-auto"><div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6"><h1 className="text-2xl font-bold flex items-center gap-2"><Package className="w-6 h-6"/>Inventory</h1><div className="flex gap-2">{canManageInventory&&(<button onClick={downloadProductList} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2"><Download size={18}/>Export</button>)}{canManageInventory&&(<button onClick={()=>{setEditing(null);resetForm();setShowModal(true);}} className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2"><Plus size={18}/>Add Product</button>)}</div></div><div className="mb-4 relative"><Search className="absolute left-3 top-2.5 text-gray-400" size={18}/><input placeholder="Search products..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} className="w-full pl-10 p-2 border rounded-lg"/></div><div className="hidden md:block bg-white rounded-xl shadow overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-gray-50 border-b"><tr><th className="p-3 text-left">Name</th><th className="p-3 text-left">Barcode</th><th className="p-3 text-left">Category</th><th className="p-3 text-right">Cost</th><th className="p-3 text-right">Price</th><th className="p-3 text-right">Stock</th><th className="p-3 text-center">Active</th><th className="p-3 text-center">Actions</th></tr></thead><tbody>{filtered.map(p=>{const profit=p.unit_price-(p.cost_price||0);const margin=p.unit_price>0?((profit/p.unit_price)*100).toFixed(0):0;return(<tr key={p.id} className="border-b hover:bg-gray-50"><td className="p-3">{p.name}</td><td className="p-3">{p.barcode||'-'}</td><td className="p-3">{p.category||'-'}</td><td className="p-3 text-right">{companySettings.currency_symbol}{(p.cost_price||0).toFixed(2)}</td><td className="p-3 text-right">{companySettings.currency_symbol}{p.unit_price?.toFixed(2)}</td><td className="p-3 text-right">{p.stock_quantity}</td><td className="p-3 text-center">{p.is_active?'✅':'❌'}</td><td className="p-3"><div className="flex gap-1 justify-center"><button onClick={()=>setPreviewProduct({...p,profit,margin})} className="p-1.5 text-purple-600 hover:bg-purple-50 rounded"><Eye size={18}/></button>{canManageInventory&&<><button onClick={()=>openEdit(p)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"><Edit2 size={18}/></button><button onClick={()=>toggleProductActive(p)} className={`p-1.5 rounded ${p.is_active?'text-red-600 hover:bg-red-50':'text-green-600 hover:bg-green-50'}`}><X size={18}/></button></>}</div></td></tr>);})}</tbody></table></div></div><div className="md:hidden space-y-3">{filtered.map(p=>{const profit=p.unit_price-(p.cost_price||0);const margin=p.unit_price>0?((profit/p.unit_price)*100).toFixed(0):0;return(<div key={p.id} className="bg-white rounded-lg shadow p-4"><div className="flex justify-between items-start"><div><h3 className="font-medium">{p.name}</h3><p className="text-sm text-gray-500">{p.category||'No category'}</p></div><span className={`text-xs px-2 py-1 rounded-full ${p.is_active?'bg-green-100 text-green-800':'bg-gray-100 text-gray-800'}`}>{p.is_active?'Active':'Inactive'}</span></div><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><div><span className="text-gray-500">Cost:</span> {companySettings.currency_symbol}{(p.cost_price||0).toFixed(2)}</div><div><span className="text-gray-500">Price:</span> {companySettings.currency_symbol}{p.unit_price?.toFixed(2)}</div><div><span className="text-gray-500">Profit:</span> {companySettings.currency_symbol}{profit.toFixed(2)} ({margin}%)</div><div><span className="text-gray-500">Stock:</span> {p.stock_quantity}</div></div><div className="mt-4 flex gap-2 justify-end border-t pt-3"><button onClick={()=>setPreviewProduct({...p,profit,margin})} className="p-2 bg-purple-50 text-purple-600 rounded-lg"><Eye size={18}/></button>{canManageInventory&&<><button onClick={()=>openEdit(p)} className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Edit2 size={18}/></button><button onClick={()=>toggleProductActive(p)} className={`p-2 rounded-lg ${p.is_active?'bg-red-50 text-red-600':'bg-green-50 text-green-600'}`}><X size={18}/></button></>}</div></div>);})}</div>{previewProduct&&(<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="bg-white rounded-xl w-full max-w-md"><div className="p-4 border-b flex justify-between"><h2>Product Details</h2><button onClick={()=>setPreviewProduct(null)}><X/></button></div><div className="p-6 space-y-2"><p><strong>Name:</strong> {previewProduct.name}</p><p><strong>Barcode:</strong> {previewProduct.barcode||'N/A'}</p><p><strong>Category:</strong> {previewProduct.category||'N/A'}</p><p><strong>Cost Price:</strong> {companySettings.currency_symbol}{(previewProduct.cost_price||0).toFixed(2)}</p><p><strong>Selling Price:</strong> {companySettings.currency_symbol}{previewProduct.unit_price?.toFixed(2)}</p><p><strong>Profit per item:</strong> {companySettings.currency_symbol}{previewProduct.profit?.toFixed(2)} ({previewProduct.margin}%)</p><p><strong>Stock:</strong> {previewProduct.stock_quantity}</p><p><strong>Status:</strong> {previewProduct.is_active?'Active':'Inactive'}</p></div><div className="p-4 border-t flex justify-end"><button onClick={()=>setPreviewProduct(null)} className="px-4 py-2 bg-gray-200 rounded">Close</button></div></div></div>)}{showModal&&(<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="bg-white rounded-xl w-full max-w-md max-h-[90vh] overflow-auto"><div className="p-4 border-b flex justify-between"><h2>{editing?'Edit':'Add'} Product</h2><button onClick={()=>setShowModal(false)}><X/></button></div><form onSubmit={handleSubmit} className="p-4 space-y-3"><div className="relative"><input placeholder="Barcode" value={form.barcode} onChange={e=>setForm({...form,barcode:e.target.value})} className="w-full p-2 border rounded pr-10"/><button type="button" onClick={()=>setShowScanner(true)} className="absolute right-2 top-2 text-blue-600"><Camera size={18}/></button></div><input placeholder="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} className="w-full p-2 border rounded" required/><input placeholder="Category" value={form.category} onChange={e=>setForm({...form,category:e.target.value})} className="w-full p-2 border rounded"/><div className="grid grid-cols-2 gap-2"><input type="number" step="0.01" placeholder="Cost Price" value={form.cost_price} onChange={e=>setForm({...form,cost_price:e.target.value})} className="w-full p-2 border rounded"/><input type="number" step="0.01" placeholder="Selling Price" value={form.unit_price} onChange={e=>setForm({...form,unit_price:e.target.value})} className="w-full p-2 border rounded" required/></div><input type="number" placeholder="Stock" value={form.stock_quantity} onChange={e=>setForm({...form,stock_quantity:e.target.value})} className="w-full p-2 border rounded"/><input type="number" step="0.1" placeholder="Discount %" value={form.discount_percent} onChange={e=>setForm({...form,discount_percent:e.target.value})} className="w-full p-2 border rounded"/><input type="date" placeholder="Expiry" value={form.expiry_date} onChange={e=>setForm({...form,expiry_date:e.target.value})} className="w-full p-2 border rounded"/><label className="flex items-center gap-2"><input type="checkbox" checked={form.is_active} onChange={e=>setForm({...form,is_active:e.target.checked})}/>Active</label><div className="flex gap-2 pt-2"><button type="button" onClick={()=>setShowModal(false)} className="flex-1 py-2 border rounded">Cancel</button><button type="submit" className="flex-1 py-2 bg-green-600 text-white rounded">Save</button></div></form></div></div>)}{showScanner&&<BarcodeScanner onScan={handleScan} onClose={()=>setShowScanner(false)} hardwareScanner={companySettings.hardware_scanner}/>}</div>);}
+import React,{useState,useEffect,useCallback} from 'react';
+import {supabase} from '../lib/supabase';
+import {useAuth} from '../contexts/AuthContext';
+import toast from 'react-hot-toast';
+import {Package,Plus,Edit2,X,Search,Camera,Eye,Download,Trash2} from 'lucide-react';
+import BarcodeScanner from '../components/BarcodeScanner';
+
+export default function Inventory(){
+  const {storeId,canManageInventory} = useAuth();
+  const [products,setProducts] = useState([]);
+  const [loading,setLoading] = useState(true);
+  const [searchTerm,setSearchTerm] = useState('');
+  const [showModal,setShowModal] = useState(false);
+  const [editing,setEditing] = useState(null);
+  const [showScanner,setShowScanner] = useState(false);
+  const [companySettings,setCompanySettings] = useState({hardware_scanner:'camera',currency_symbol:'K'});
+  const [form,setForm] = useState({name:'',barcode:'',category:'',unit_price:'',cost_price:'',stock_quantity:'',discount_percent:'0',expiry_date:'',is_active:true});
+  const [previewProduct,setPreviewProduct] = useState(null);
+
+  const loadProducts = useCallback(async()=>{
+    if(!storeId)return;
+    const {data}=await supabase.from('products').select('*').eq('store_id',storeId).order('name');
+    setProducts(data||[]);
+    setLoading(false);
+  },[storeId]);
+
+  useEffect(()=>{
+    if(storeId){
+      loadProducts();
+      supabase.from('company_settings').select('hardware_scanner,currency_symbol').eq('store_id',storeId).single().then(({data})=>{if(data)setCompanySettings(data);});
+    }
+  },[storeId,loadProducts]);
+
+  const handleScan = (barcode) => {
+    setForm({...form,barcode});
+    setShowScanner(false);
+    toast.success(`Barcode: ${barcode}`);
+  };
+
+  const handleSubmit = async e => {
+    e.preventDefault();
+    if(!canManageInventory)return toast.error('Permission denied');
+    try{
+      const payload = {
+        ...form,
+        unit_price:parseFloat(form.unit_price)||0,
+        cost_price:parseFloat(form.cost_price)||0,
+        stock_quantity:parseInt(form.stock_quantity)||0,
+        discount_percent:parseFloat(form.discount_percent)||0,
+        store_id:storeId,
+        expiry_date:form.expiry_date||null
+      };
+      if(editing){
+        await supabase.from('products').update(payload).eq('id',editing.id);
+        toast.success('Product updated');
+      }else{
+        await supabase.from('products').insert(payload);
+        toast.success('Product added');
+      }
+      setShowModal(false);
+      setEditing(null);
+      resetForm();
+      loadProducts();
+    }catch(err){
+      toast.error(err.message);
+    }
+  };
+
+  const toggleProductActive = async (product) => {
+    if(!canManageInventory)return;
+    const newStatus = !product.is_active;
+    const {error} = await supabase.from('products').update({is_active:newStatus}).eq('id',product.id);
+    if(error)toast.error(error.message);
+    else{
+      toast.success(`Product ${newStatus?'activated':'deactivated'}`);
+      loadProducts();
+    }
+  };
+
+  const deleteProduct = async (product) => {
+    if(!canManageInventory) return toast.error('Permission denied');
+    if(!window.confirm(`Delete "${product.name}" permanently? This cannot be undone.`)) return;
+    const {error} = await supabase.from('products').delete().eq('id',product.id);
+    if(error) toast.error(error.message);
+    else{
+      toast.success('Product deleted');
+      loadProducts();
+    }
+  };
+
+  const downloadProductList = () => {
+    const headers = ['Name','Barcode','Category','Cost','Price','Stock','Active'];
+    const rows = products.map(p=>[p.name,p.barcode||'',p.category||'',p.cost_price||0,p.unit_price,p.stock_quantity,p.is_active?'Yes':'No']);
+    const csv = [headers,...rows].map(r=>r.join(',')).join('\n');
+    const blob = new Blob([csv],{type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `inventory_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const resetForm = () => setForm({name:'',barcode:'',category:'',unit_price:'',cost_price:'',stock_quantity:'',discount_percent:'0',expiry_date:'',is_active:true});
+
+  const openEdit = p => {
+    setEditing(p);
+    setForm({
+      name:p.name,barcode:p.barcode||'',category:p.category||'',
+      unit_price:p.unit_price,cost_price:p.cost_price||0,
+      stock_quantity:p.stock_quantity,discount_percent:p.discount_percent||'0',
+      expiry_date:p.expiry_date||'',is_active:p.is_active
+    });
+    setShowModal(true);
+  };
+
+  const filtered = products.filter(p=>p.name?.toLowerCase().includes(searchTerm.toLowerCase())||p.barcode?.includes(searchTerm));
+
+  if(loading)return <div className="p-8 text-center">Loading inventory...</div>;
+
+  const currency = companySettings.currency_symbol;
+
+  return (
+    <div className="p-4 h-full overflow-y-auto">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
+        <h1 className="text-2xl font-bold flex items-center gap-2"><Package className="w-6 h-6"/>Inventory</h1>
+        <div className="flex gap-2 w-full sm:w-auto">
+          {canManageInventory && (
+            <button onClick={downloadProductList} className="flex-1 sm:flex-none bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2">
+              <Download size={18}/> <span className="hidden sm:inline">Export</span>
+            </button>
+          )}
+          {canManageInventory && (
+            <button onClick={()=>{setEditing(null);resetForm();setShowModal(true);}} className="flex-1 sm:flex-none bg-green-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2">
+              <Plus size={18}/> <span className="hidden sm:inline">Add Product</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="mb-4 relative">
+        <Search className="absolute left-3 top-2.5 text-gray-400" size={18}/>
+        <input placeholder="Search products..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} className="w-full pl-10 p-2 border rounded-lg"/>
+      </div>
+
+      {/* Desktop Table */}
+      <div className="hidden md:block bg-white rounded-xl shadow overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b">
+              <tr>
+                <th className="p-3 text-left">Name</th>
+                <th className="p-3 text-left">Barcode</th>
+                <th className="p-3 text-left">Category</th>
+                <th className="p-3 text-right">Cost</th>
+                <th className="p-3 text-right">Price</th>
+                <th className="p-3 text-right">Stock</th>
+                <th className="p-3 text-center">Active</th>
+                <th className="p-3 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(p=>{
+                const profit = p.unit_price-(p.cost_price||0);
+                const margin = p.unit_price>0?((profit/p.unit_price)*100).toFixed(0):0;
+                return (
+                  <tr key={p.id} className="border-b hover:bg-gray-50">
+                    <td className="p-3">{p.name}</td>
+                    <td className="p-3">{p.barcode||'-'}</td>
+                    <td className="p-3">{p.category||'-'}</td>
+                    <td className="p-3 text-right">{currency}{(p.cost_price||0).toFixed(2)}</td>
+                    <td className="p-3 text-right">{currency}{p.unit_price?.toFixed(2)}</td>
+                    <td className="p-3 text-right">{p.stock_quantity}</td>
+                    <td className="p-3 text-center">{p.is_active?'✅':'❌'}</td>
+                    <td className="p-3">
+                      <div className="flex gap-1 justify-center">
+                        <button onClick={()=>setPreviewProduct({...p,profit,margin})} className="p-1.5 text-purple-600 hover:bg-purple-50 rounded"><Eye size={18}/></button>
+                        {canManageInventory && (
+                          <>
+                            <button onClick={()=>openEdit(p)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"><Edit2 size={18}/></button>
+                            <button onClick={()=>toggleProductActive(p)} className={`p-1.5 rounded ${p.is_active?'text-red-600 hover:bg-red-50':'text-green-600 hover:bg-green-50'}`}><X size={18}/></button>
+                            <button onClick={()=>deleteProduct(p)} className="p-1.5 text-red-600 hover:bg-red-50 rounded"><Trash2 size={18}/></button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Mobile Cards */}
+      <div className="md:hidden space-y-3">
+        {filtered.map(p=>{
+          const profit = p.unit_price-(p.cost_price||0);
+          const margin = p.unit_price>0?((profit/p.unit_price)*100).toFixed(0):0;
+          return (
+            <div key={p.id} className="bg-white rounded-lg shadow p-4">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h3 className="font-medium">{p.name}</h3>
+                  <p className="text-sm text-gray-500">{p.category||'No category'}</p>
+                </div>
+                <span className={`text-xs px-2 py-1 rounded-full ${p.is_active?'bg-green-100 text-green-800':'bg-gray-100 text-gray-800'}`}>
+                  {p.is_active?'Active':'Inactive'}
+                </span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                <div><span className="text-gray-500">Cost:</span> {currency}{(p.cost_price||0).toFixed(2)}</div>
+                <div><span className="text-gray-500">Price:</span> {currency}{p.unit_price?.toFixed(2)}</div>
+                <div><span className="text-gray-500">Profit:</span> {currency}{profit.toFixed(2)} ({margin}%)</div>
+                <div><span className="text-gray-500">Stock:</span> {p.stock_quantity}</div>
+              </div>
+              <div className="mt-4 flex gap-2 justify-end border-t pt-3">
+                <button onClick={()=>setPreviewProduct({...p,profit,margin})} className="p-2 bg-purple-50 text-purple-600 rounded-lg"><Eye size={18}/></button>
+                {canManageInventory && (
+                  <>
+                    <button onClick={()=>openEdit(p)} className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Edit2 size={18}/></button>
+                    <button onClick={()=>toggleProductActive(p)} className={`p-2 rounded-lg ${p.is_active?'bg-red-50 text-red-600':'bg-green-50 text-green-600'}`}><X size={18}/></button>
+                    <button onClick={()=>deleteProduct(p)} className="p-2 bg-red-50 text-red-600 rounded-lg"><Trash2 size={18}/></button>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Preview Modal (unchanged) */}
+      {previewProduct&&(
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-md">
+            <div className="p-4 border-b flex justify-between"><h2>Product Details</h2><button onClick={()=>setPreviewProduct(null)}><X/></button></div>
+            <div className="p-6 space-y-2">
+              <p><strong>Name:</strong> {previewProduct.name}</p>
+              <p><strong>Barcode:</strong> {previewProduct.barcode||'N/A'}</p>
+              <p><strong>Category:</strong> {previewProduct.category||'N/A'}</p>
+              <p><strong>Cost:</strong> {currency}{(previewProduct.cost_price||0).toFixed(2)}</p>
+              <p><strong>Price:</strong> {currency}{previewProduct.unit_price?.toFixed(2)}</p>
+              <p><strong>Profit:</strong> {currency}{previewProduct.profit?.toFixed(2)} ({previewProduct.margin}%)</p>
+              <p><strong>Stock:</strong> {previewProduct.stock_quantity}</p>
+              <p><strong>Status:</strong> {previewProduct.is_active?'Active':'Inactive'}</p>
+            </div>
+            <div className="p-4 border-t flex justify-end"><button onClick={()=>setPreviewProduct(null)} className="px-4 py-2 bg-gray-200 rounded">Close</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* Add/Edit Modal (unchanged) */}
+      {showModal&&(
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-md max-h-[90vh] overflow-auto">
+            <div className="p-4 border-b flex justify-between"><h2>{editing?'Edit':'Add'} Product</h2><button onClick={()=>setShowModal(false)}><X/></button></div>
+            <form onSubmit={handleSubmit} className="p-4 space-y-3">
+              <div className="relative">
+                <input placeholder="Barcode" value={form.barcode} onChange={e=>setForm({...form,barcode:e.target.value})} className="w-full p-2 border rounded pr-10"/>
+                <button type="button" onClick={()=>setShowScanner(true)} className="absolute right-2 top-2 text-blue-600"><Camera size={18}/></button>
+              </div>
+              <input placeholder="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} className="w-full p-2 border rounded" required/>
+              <input placeholder="Category" value={form.category} onChange={e=>setForm({...form,category:e.target.value})} className="w-full p-2 border rounded"/>
+              <div className="grid grid-cols-2 gap-2">
+                <input type="number" step="0.01" placeholder="Cost Price" value={form.cost_price} onChange={e=>setForm({...form,cost_price:e.target.value})} className="w-full p-2 border rounded"/>
+                <input type="number" step="0.01" placeholder="Selling Price" value={form.unit_price} onChange={e=>setForm({...form,unit_price:e.target.value})} className="w-full p-2 border rounded" required/>
+              </div>
+              <input type="number" placeholder="Stock" value={form.stock_quantity} onChange={e=>setForm({...form,stock_quantity:e.target.value})} className="w-full p-2 border rounded"/>
+              <input type="number" step="0.1" placeholder="Discount %" value={form.discount_percent} onChange={e=>setForm({...form,discount_percent:e.target.value})} className="w-full p-2 border rounded"/>
+              <input type="date" placeholder="Expiry" value={form.expiry_date} onChange={e=>setForm({...form,expiry_date:e.target.value})} className="w-full p-2 border rounded"/>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={form.is_active} onChange={e=>setForm({...form,is_active:e.target.checked})}/>Active</label>
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={()=>setShowModal(false)} className="flex-1 py-2 border rounded">Cancel</button>
+                <button type="submit" className="flex-1 py-2 bg-green-600 text-white rounded">Save</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showScanner&&<BarcodeScanner onScan={handleScan} onClose={()=>setShowScanner(false)} hardwareScanner={companySettings.hardware_scanner}/>}
+    </div>
+  );
+}

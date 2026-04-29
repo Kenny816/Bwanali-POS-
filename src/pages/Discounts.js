@@ -1,11 +1,294 @@
-import React,{useState,useEffect,useCallback} from 'react';import {supabase} from '../lib/supabase';import {useAuth} from '../contexts/AuthContext';import toast from 'react-hot-toast';import {Percent,Plus,Edit2,Trash2,X,ToggleLeft,ToggleRight} from 'lucide-react';
-export default function Discounts(){const {storeId,staff}=useAuth();const [discounts,setDiscounts]=useState([]);const [loading,setLoading]=useState(true);const [showModal,setShowModal]=useState(false);const [editing,setEditing]=useState(null);const [form,setForm]=useState({name:'',type:'percentage',value:'',min_purchase:'',start_date:'',end_date:'',is_active:true});const isAdmin=staff?.role==='admin';
-const loadDiscounts=useCallback(async()=>{if(!storeId)return;const {data}=await supabase.from('discount_rules').select('*').eq('store_id',storeId).order('created_at',{ascending:false});setDiscounts(data||[]);setLoading(false);},[storeId]);
-useEffect(()=>{if(storeId)loadDiscounts();},[storeId,loadDiscounts]);
-const handleSubmit=async e=>{e.preventDefault();if(!isAdmin)return toast.error('Admin only');if(!form.name)return toast.error('Name required');if(!form.value||parseFloat(form.value)<=0)return toast.error('Value must be >0');try{const payload={name:form.name,type:form.type,value:parseFloat(form.value),min_purchase:form.min_purchase?parseFloat(form.min_purchase):null,store_id:storeId,start_date:form.start_date||null,end_date:form.end_date||null,is_active:form.is_active};if(editing){await supabase.from('discount_rules').update(payload).eq('id',editing.id);toast.success('Updated');}else{await supabase.from('discount_rules').insert(payload);toast.success('Created');}setShowModal(false);setEditing(null);setForm({name:'',type:'percentage',value:'',min_purchase:'',start_date:'',end_date:'',is_active:true});loadDiscounts();}catch(err){toast.error(err.message);}};
-const toggleActive=async(d)=>{if(!isAdmin)return;const newStatus=!d.is_active;await supabase.from('discount_rules').update({is_active:newStatus}).eq('id',d.id);toast.success(`Discount ${newStatus?'activated':'deactivated'}`);loadDiscounts();};
-const deleteDiscount=async(d)=>{if(!isAdmin)return;if(!window.confirm(`Delete "${d.name}"?`))return;await supabase.from('discount_rules').delete().eq('id',d.id);toast.success('Deleted');loadDiscounts();};
-const openEdit=d=>{setEditing(d);setForm({name:d.name,type:d.type,value:d.value,min_purchase:d.min_purchase||'',start_date:d.start_date||'',end_date:d.end_date||'',is_active:d.is_active});setShowModal(true);};
-const formatValue=d=>d.type==='percentage'?`${d.value}%`:`K${parseFloat(d.value).toFixed(2)}`;
-if(!isAdmin)return<div className="p-8 text-red-600">Access Denied</div>;if(loading)return<div className="p-8">Loading...</div>;
-return(<div className="p-4 h-full overflow-y-auto"><div className="flex justify-between mb-6"><h1 className="text-2xl font-bold"><Percent className="inline mr-2"/>Discounts</h1><button onClick={()=>{setEditing(null);setForm({name:'',type:'percentage',value:'',min_purchase:'',start_date:'',end_date:'',is_active:true});setShowModal(true);}} className="bg-green-600 text-white px-4 py-2 rounded-lg"><Plus size={18}/>Add Discount</button></div>{discounts.length===0?<div className="bg-white rounded-xl shadow p-12 text-center"><Percent size={48} className="mx-auto mb-4 opacity-30"/><p>No discounts created</p></div>:<div className="grid gap-4">{discounts.map(d=>(<div key={d.id} className="bg-white rounded-xl shadow p-5"><div className="flex justify-between"><div><h3 className="text-lg font-bold">{d.name}</h3><span className={`text-xs px-2 py-1 rounded-full ${d.is_active?'bg-green-100 text-green-800':'bg-gray-100'}`}>{d.is_active?'Active':'Inactive'}</span></div><div className="flex gap-2"><button onClick={()=>toggleActive(d)} className={`p-2 rounded-lg ${d.is_active?'text-orange-600 hover:bg-orange-50':'text-green-600 hover:bg-green-50'}`}>{d.is_active?<ToggleRight size={20}/>:<ToggleLeft size={20}/>}</button><button onClick={()=>openEdit(d)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Edit2 size={20}/></button><button onClick={()=>deleteDiscount(d)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={20}/></button></div></div><div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm"><div><p className="text-gray-500">Type</p><p className="font-medium capitalize">{d.type}</p></div><div><p className="text-gray-500">Value</p><p className="font-medium text-green-600">{formatValue(d)}</p></div><div><p className="text-gray-500">Min Purchase</p><p className="font-medium">{d.min_purchase?`K${parseFloat(d.min_purchase).toFixed(2)}`:'None'}</p></div><div><p className="text-gray-500">Valid</p><p className="font-medium text-xs">{d.start_date&&d.end_date?`${new Date(d.start_date).toLocaleDateString()} - ${new Date(d.end_date).toLocaleDateString()}`:d.start_date?`From ${new Date(d.start_date).toLocaleDateString()}`:d.end_date?`Until ${new Date(d.end_date).toLocaleDateString()}`:'Always active'}</p></div></div></div>))}</div>}{showModal&&(<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="bg-white rounded-xl w-full max-w-md"><div className="p-4 border-b flex justify-between"><h2>{editing?'Edit':'Create'} Discount</h2><button onClick={()=>setShowModal(false)}><X/></button></div><form onSubmit={handleSubmit} className="p-4 space-y-4"><input placeholder="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} className="w-full p-2 border rounded" required/><select value={form.type} onChange={e=>setForm({...form,type:e.target.value})} className="w-full p-2 border rounded"><option value="percentage">Percentage (%)</option><option value="fixed">Fixed Amount (K)</option></select><input type="number" step="0.01" placeholder="Value" value={form.value} onChange={e=>setForm({...form,value:e.target.value})} className="w-full p-2 border rounded" required/><input type="number" step="0.01" placeholder="Min Purchase (optional)" value={form.min_purchase} onChange={e=>setForm({...form,min_purchase:e.target.value})} className="w-full p-2 border rounded"/><div className="grid grid-cols-2 gap-2"><input type="date" value={form.start_date} onChange={e=>setForm({...form,start_date:e.target.value})} className="w-full p-2 border rounded"/><input type="date" value={form.end_date} onChange={e=>setForm({...form,end_date:e.target.value})} className="w-full p-2 border rounded"/></div><label className="flex items-center gap-2"><input type="checkbox" checked={form.is_active} onChange={e=>setForm({...form,is_active:e.target.checked})}/>Active</label><div className="flex gap-2"><button type="button" onClick={()=>setShowModal(false)} className="flex-1 py-2 border rounded">Cancel</button><button type="submit" className="flex-1 py-2 bg-green-600 text-white rounded">{editing?'Update':'Create'}</button></div></form></div></div>)}</div>);}
+import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import toast from 'react-hot-toast';
+import { Percent, Plus, Edit2, Trash2, X, ToggleLeft, ToggleRight, Search, Tag } from 'lucide-react';
+
+export default function Discounts() {
+  const { storeId, staff } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+
+  const [discounts, setDiscounts] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({
+    name: '',
+    type: 'percentage',
+    value: '',
+    min_purchase: '',
+    start_date: '',
+    end_date: '',
+    is_active: true,
+    product_id: '',
+  });
+  const [productSearch, setProductSearch] = useState('');
+
+  const isAdmin = staff?.role === 'admin';
+
+  const loadProducts = useCallback(async () => {
+    if (!storeId) return;
+    try {
+      const { data } = await supabase.from('products').select('id,name').eq('store_id', storeId).eq('is_active', true).order('name');
+      let list = data || [];
+      const qId = searchParams.get('productId');
+      if (qId && !list.find(p => p.id === qId)) {
+        const qName = searchParams.get('productName') || 'Selected Product';
+        list.push({ id: qId, name: qName });
+      }
+      setProducts(list);
+    } catch (e) { console.error(e); }
+  }, [storeId, searchParams]);
+
+  const loadDiscounts = useCallback(async () => {
+    if (!storeId) return;
+    try {
+      const { data } = await supabase.from('discount_rules').select('*').eq('store_id', storeId).order('created_at', { ascending: false });
+      setDiscounts(data || []);
+    } catch (e) {
+      toast.error('Failed to load discounts');
+    } finally {
+      setLoading(false);
+    }
+  }, [storeId]);
+
+  useEffect(() => {
+    if (storeId) {
+      loadProducts();
+      loadDiscounts();
+    }
+  }, [storeId, loadProducts, loadDiscounts]);
+
+  // Auto‑open modal if productId query param exists
+  useEffect(() => {
+    const productId = searchParams.get('productId');
+    if (productId) {
+      const productName = searchParams.get('productName') || '';
+      setForm(prev => ({
+        ...prev,
+        product_id: productId,
+        name: prev.name || (productName ? `${productName} Discount` : ''),
+      }));
+      setShowModal(true);
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('productId');
+      newParams.delete('productName');
+      setSearchParams(newParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
+  const handleSubmit = async e => {
+    e.preventDefault();
+    if (!isAdmin) return toast.error('Admin only');
+    if (!form.name) return toast.error('Name required');
+    if (!form.value || parseFloat(form.value) <= 0) return toast.error('Value must be >0');
+    try {
+      const payload = {
+        name: form.name,
+        type: form.type,
+        value: parseFloat(form.value),
+        min_purchase: form.min_purchase ? parseFloat(form.min_purchase) : null,
+        product_id: form.product_id || null,
+        start_date: form.start_date || null,
+        end_date: form.end_date || null,
+        is_active: form.is_active,
+        store_id: storeId,
+      };
+      if (editing) {
+        const { error } = await supabase.from('discount_rules').update(payload).eq('id', editing.id);
+        if (error) throw error;
+        toast.success('Updated');
+      } else {
+        const { error } = await supabase.from('discount_rules').insert(payload);
+        if (error) throw error;
+        toast.success('Created');
+      }
+      setShowModal(false);
+      setEditing(null);
+      setForm({ name: '', type: 'percentage', value: '', min_purchase: '', start_date: '', end_date: '', is_active: true, product_id: '' });
+      loadDiscounts();
+    } catch (err) {
+      toast.error(err.message);
+      console.error(err);
+    }
+  };
+
+  const toggleActive = async d => {
+    if (!isAdmin) return;
+    try {
+      await supabase.from('discount_rules').update({ is_active: !d.is_active }).eq('id', d.id);
+      toast.success(`Discount ${!d.is_active ? 'activated' : 'deactivated'}`);
+      loadDiscounts();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const deleteDiscount = async d => {
+    if (!isAdmin) return;
+    if (!window.confirm(`Delete "${d.name}"?`)) return;
+    try {
+      await supabase.from('discount_rules').delete().eq('id', d.id);
+      toast.success('Deleted');
+      loadDiscounts();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const openEdit = d => {
+    setEditing(d);
+    setForm({
+      name: d.name,
+      type: d.type,
+      value: d.value,
+      min_purchase: d.min_purchase || '',
+      start_date: d.start_date || '',
+      end_date: d.end_date || '',
+      is_active: d.is_active,
+      product_id: d.product_id || '',
+    });
+    setShowModal(true);
+  };
+
+  const formatValue = d => d.type === 'percentage' ? `${d.value}%` : `K${parseFloat(d.value).toFixed(2)}`;
+  const getProductName = id => products.find(p => p.id === id)?.name;
+  const filteredProducts = products.filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase()));
+
+  if (!isAdmin) return <div className="p-8 text-red-600">Access Denied</div>;
+  if (loading) return <div className="p-8">Loading...</div>;
+
+  return (
+    <div className="p-4 h-full overflow-y-auto">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
+        <h1 className="text-2xl font-bold"><Percent className="inline mr-2" />Discounts</h1>
+        <button
+          onClick={() => {
+            setEditing(null);
+            setForm({ name: '', type: 'percentage', value: '', min_purchase: '', start_date: '', end_date: '', is_active: true, product_id: '' });
+            setShowModal(true);
+          }}
+          className="w-full sm:w-auto bg-green-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2"
+        >
+          <Plus size={18} /> Add Discount
+        </button>
+      </div>
+
+      {/* Discount list as responsive cards */}
+      {discounts.length === 0 ? (
+        <div className="bg-white rounded-xl shadow p-12 text-center">
+          <Percent size={48} className="mx-auto mb-4 opacity-30" />
+          <p>No discounts created</p>
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+          {discounts.map(d => {
+            const productName = getProductName(d.product_id);
+            return (
+              <div key={d.id} className="bg-white rounded-xl shadow p-5">
+                <div className="flex justify-between">
+                  <div>
+                    <h3 className="text-lg font-bold">{d.name}</h3>
+                    {productName && (
+                      <span className="inline-flex items-center gap-1 text-sm text-gray-500 ml-2">
+                        <Tag size={14} /> {productName}
+                      </span>
+                    )}
+                    <span className={`text-xs px-2 py-1 rounded-full ${d.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100'}`}>
+                      {d.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => toggleActive(d)} className={`p-2 rounded-lg ${d.is_active ? 'text-orange-600 hover:bg-orange-50' : 'text-green-600 hover:bg-green-50'}`}>
+                      {d.is_active ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+                    </button>
+                    <button onClick={() => openEdit(d)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Edit2 size={20} /></button>
+                    <button onClick={() => deleteDiscount(d)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={20} /></button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4 mt-3 text-sm">
+                  <div><p className="text-gray-500">Type</p><p className="font-medium capitalize">{d.type}</p></div>
+                  <div><p className="text-gray-500">Value</p><p className="font-medium text-green-600">{formatValue(d)}</p></div>
+                  <div><p className="text-gray-500">Min Purchase</p><p className="font-medium">{d.min_purchase ? `K${parseFloat(d.min_purchase).toFixed(2)}` : 'None'}</p></div>
+                  <div>
+                    <p className="text-gray-500">Valid</p>
+                    <p className="font-medium text-xs">
+                      {d.start_date && d.end_date
+                        ? `${new Date(d.start_date).toLocaleDateString()} - ${new Date(d.end_date).toLocaleDateString()}`
+                        : d.start_date
+                          ? `From ${new Date(d.start_date).toLocaleDateString()}`
+                          : d.end_date
+                            ? `Until ${new Date(d.end_date).toLocaleDateString()}`
+                            : 'Always active'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Create/Edit Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="p-4 border-b flex justify-between">
+              <h2>{editing ? 'Edit' : 'Create'} Discount</h2>
+              <button onClick={() => setShowModal(false)}><X /></button>
+            </div>
+            <form onSubmit={handleSubmit} className="p-4 space-y-4">
+              {/* Product selector */}
+              <div>
+                <label className="block text-sm font-medium mb-1">Apply to Product (optional)</label>
+                <div className="relative">
+                  <Search size={16} className="absolute left-3 top-3 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search product..."
+                    value={productSearch}
+                    onChange={e => setProductSearch(e.target.value)}
+                    className="w-full pl-10 pr-3 py-2 border rounded"
+                  />
+                </div>
+                <select
+                  value={form.product_id}
+                  onChange={e => setForm({ ...form, product_id: e.target.value })}
+                  className="w-full mt-1 p-2 border rounded"
+                >
+                  <option value="">All Products (store-wide)</option>
+                  {filteredProducts.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <input placeholder="Discount Name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="w-full p-2 border rounded" required />
+              <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} className="w-full p-2 border rounded">
+                <option value="percentage">Percentage (%)</option>
+                <option value="fixed">Fixed Amount (K)</option>
+              </select>
+              <input type="number" step="0.01" placeholder="Value" value={form.value} onChange={e => setForm({ ...form, value: e.target.value })} className="w-full p-2 border rounded" required />
+              <input type="number" step="0.01" placeholder="Min Purchase (optional)" value={form.min_purchase} onChange={e => setForm({ ...form, min_purchase: e.target.value })} className="w-full p-2 border rounded" />
+              <div className="grid grid-cols-2 gap-2">
+                <input type="date" value={form.start_date} onChange={e => setForm({ ...form, start_date: e.target.value })} className="w-full p-2 border rounded" />
+                <input type="date" value={form.end_date} onChange={e => setForm({ ...form, end_date: e.target.value })} className="w-full p-2 border rounded" />
+              </div>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={form.is_active} onChange={e => setForm({ ...form, is_active: e.target.checked })} /> Active
+              </label>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-2 border rounded">Cancel</button>
+                <button type="submit" className="flex-1 py-2 bg-green-600 text-white rounded">{editing ? 'Update' : 'Create'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
