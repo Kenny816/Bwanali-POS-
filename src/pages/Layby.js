@@ -32,21 +32,30 @@ export default function Layby() {
     if (!storeId) return;
     const { data } = await supabase
       .from('laybys')
-      .select('*, staff:staff(full_name)')
+      .select('*')
       .eq('store_id', storeId)
       .order('created_at', { ascending: false });
-    setLaybys(data?.data || data || []);
+    const rawLaybys = data || [];
+    // Manually attach staff names because mock doesn’t support joins
+    const { data: allStaff } = await supabase.from('staff').select('id,full_name');
+    const staffMap = {};
+    (allStaff || []).forEach(s => { staffMap[s.id] = s.full_name; });
+    const enriched = rawLaybys.map(l => ({
+      ...l,
+      staff: { full_name: staffMap[l.staff_id] || 'Unknown' }
+    }));
+    setLaybys(enriched);
     setLoading(false);
   }, [storeId]);
 
   const loadCustomers = async () => {
     const { data } = await supabase.from('customers').select('id,name,phone').eq('store_id', storeId).order('name');
-    setCustomers(data?.data || data || []);
+    setCustomers(data || []);
   };
 
   const loadProducts = async () => {
     const { data } = await supabase.from('products').select('*').eq('store_id', storeId).eq('is_active', true).order('name');
-    setProducts(data?.data || data || []);
+    setProducts(data || []);
   };
 
   useEffect(() => {
@@ -93,8 +102,9 @@ export default function Layby() {
     if (depositVal < 0) return toast.error('Deposit cannot be negative');
     const instCount = parseInt(installments) || 1;
     if (instCount <= 0) return toast.error('Installments must be at least 1');
-    
+
     try {
+      // Insert the layby record
       const { data: layby, error } = await supabase.from('laybys').insert({
         store_id: storeId,
         customer_id: selectedCustomer || null,
@@ -113,6 +123,7 @@ export default function Layby() {
       }).select().single();
       if (error) throw error;
 
+      // Insert layby items
       const items = cart.map(i => ({
         layby_id: layby.id,
         product_id: i.id,
@@ -120,14 +131,24 @@ export default function Layby() {
         unit_price: i.unit_price,
       }));
       await supabase.from('layby_items').insert(items);
-      for (const item of cart) await supabase.rpc('decrement_stock', { p_product_id: item.id, p_quantity: item.quantity });
+
+      // Decrement stock for each product (offline safe)
+      for (const item of cart) {
+        const { data: product } = await supabase.from('products').select('stock_quantity').eq('id', item.id).single();
+        const currentStock = product?.stock_quantity || 0;
+        await supabase.from('products').update({ stock_quantity: currentStock - item.quantity }).eq('id', item.id);
+      }
+
+      // Record deposit as a payment if any
       if (depositVal > 0) {
         await supabase.from('layby_payments').insert({ layby_id: layby.id, amount: depositVal, payment_method: 'cash' });
       }
+
       toast.success('Layby created');
       setShowCreate(false);
       resetCreateForm();
       loadLaybys();
+      loadProducts(); // refresh stock counts
     } catch (err) { toast.error(err.message); }
   };
 
@@ -164,31 +185,43 @@ export default function Layby() {
     if (!window.confirm('Cancel this layby? Stock will be returned.')) return;
     try {
       const { data: items } = await supabase.from('layby_items').select('product_id,quantity').eq('layby_id', layby.id);
-      for (const item of items || []) await supabase.rpc('increment_stock', { p_product_id: item.product_id, p_quantity: item.quantity });
+      for (const item of (items || [])) {
+        const { data: product } = await supabase.from('products').select('stock_quantity').eq('id', item.product_id).single();
+        const currentStock = product?.stock_quantity || 0;
+        await supabase.from('products').update({ stock_quantity: currentStock + item.quantity }).eq('id', item.product_id);
+      }
       await supabase.from('laybys').update({ status: 'cancelled' }).eq('id', layby.id);
       toast.success('Layby cancelled');
       loadLaybys();
+      loadProducts();
     } catch (err) { toast.error(err.message); }
   };
 
-  // ========== LOCAL PRODUCT LOOKUP FOR RECEIPT ==========
-  const getProductName = (productId) => {
-    const allProds = JSON.parse(localStorage.getItem('bwanali_products') || '[]');
-    const prod = allProds.find(p => p.id === productId);
+  // Helper to get product name using the mock (offline safe)
+  const getProductName = async (productId) => {
+    const { data: products } = await supabase.from('products').select('id,name');
+    const prod = (products || []).find(p => p.id === productId);
     return prod ? prod.name : 'Unknown';
   };
 
   const printReceipt = async (laybyId) => {
-    const allLaybys = JSON.parse(localStorage.getItem('bwanali_laybys') || '[]');
-    const layby = allLaybys.find(l => l.id === laybyId);
+    // Use mock to get data, not raw localStorage
+    const { data: allLaybys } = await supabase.from('laybys').select('*');
+    const layby = (allLaybys || []).find(l => l.id === laybyId);
     if (!layby) return;
 
-    const allItems = JSON.parse(localStorage.getItem('bwanali_layby_items') || '[]');
-    const items = allItems.filter(i => i.layby_id === laybyId);
+    const { data: allItems } = await supabase.from('layby_items').select('*');
+    const items = (allItems || []).filter(i => i.layby_id === laybyId);
 
-    const allSettings = JSON.parse(localStorage.getItem('bwanali_company_settings') || '[]');
-    const settings = allSettings.find(s => s.store_id === storeId);
+    const { data: allSettings } = await supabase.from('company_settings').select('*');
+    const settings = (allSettings || []).find(s => s.store_id === storeId);
     const logoUrl = settings?.logo_url || '';
+
+    // Resolve product names
+    const productNames = {};
+    for (const item of items) {
+      productNames[item.product_id] = await getProductName(item.product_id);
+    }
 
     let receipt = `
 ${'='.repeat(40)}
@@ -201,7 +234,7 @@ Location: ${layby.location || 'N/A'}
 Date: ${new Date().toLocaleString()}
 ${'='.repeat(40)}
 Items:
-${items.map(i => `  ${getProductName(i.product_id)} x${i.quantity} @ K${i.unit_price} = K${(i.quantity * i.unit_price).toFixed(2)}`).join('\n')}
+${items.map(i => `  ${productNames[i.product_id]} x${i.quantity} @ K${i.unit_price} = K${(i.quantity * i.unit_price).toFixed(2)}`).join('\n')}
 ${'='.repeat(40)}
 Total: K${layby.total_amount?.toFixed(2)}
 Total Paid: K${layby.deposit_amount?.toFixed(2)}
@@ -240,10 +273,15 @@ ${'='.repeat(40)}
     <div className="p-4 h-full overflow-y-auto">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
         <h1 className="text-2xl font-bold"><Package className="inline mr-2" />Lay‑by</h1>
-        <button onClick={() => setShowCreate(true)} className="w-full sm:w-auto bg-green-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2"><Plus size={18} /> New Lay‑by</button>
+        <button onClick={() => setShowCreate(true)} className="w-full sm:w-auto bg-green-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2">
+          <Plus size={18} /> New Lay‑by
+        </button>
       </div>
 
-      <div className="mb-4 relative"><Search className="absolute left-3 top-2.5 text-gray-400" size={18} /><input placeholder="Search by name or phone..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 p-2 border rounded-lg" /></div>
+      <div className="mb-4 relative">
+        <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
+        <input placeholder="Search by name or phone..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 p-2 border rounded-lg" />
+      </div>
 
       <div className="space-y-4">
         {filteredLaybys.length === 0 ? (
@@ -273,7 +311,9 @@ ${'='.repeat(40)}
                   <div>Remaining: <span className="font-bold text-red-600">{currency}{remaining.toFixed(2)}</span></div>
                   {l.due_date && <div>Due: {new Date(l.due_date).toLocaleDateString()}</div>}
                 </div>
-                <div className="mt-3 w-full bg-gray-200 rounded-full h-2.5"><div className="bg-green-600 h-2.5 rounded-full" style={{width: `${progressPercent}%`}}></div></div>
+                <div className="mt-3 w-full bg-gray-200 rounded-full h-2.5">
+                  <div className="bg-green-600 h-2.5 rounded-full" style={{width: `${progressPercent}%`}}></div>
+                </div>
                 {l.status === 'active' && (
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button onClick={() => { setShowPayment(l.id); setPaymentAmount(''); }} className="px-4 py-2 bg-blue-600 text-white rounded text-sm w-full sm:w-auto">Add Payment</button>
@@ -289,7 +329,90 @@ ${'='.repeat(40)}
         )}
       </div>
 
-      {/* Create Modal & Payment Modal – same as before (omitted for brevity, keep existing ones) */}
+      {/* Create Modal */}
+      {showCreate && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-4xl max-h-[90vh] overflow-auto">
+            <div className="p-4 border-b flex justify-between"><h2 className="text-xl font-bold">New Lay‑by</h2><button onClick={() => setShowCreate(false)}><X/></button></div>
+            <div className="flex flex-col lg:flex-row">
+              <div className="flex-1 p-4 border-b lg:border-b-0 lg:border-r">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-96 overflow-y-auto">
+                  {products.map(p => (
+                    <button key={p.id} onClick={() => addToCart(p)} className="p-2 bg-gray-50 border rounded text-left text-sm">
+                      <div className="font-medium truncate">{p.name}</div>
+                      <div className="text-xs text-gray-500">{currency}{p.unit_price?.toFixed(2)}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="w-full lg:w-96 p-4 space-y-3">
+                <div>
+                  <label className="block text-sm mb-1">Existing Customer (optional)</label>
+                  <select value={selectedCustomer} onChange={e => setSelectedCustomer(e.target.value)} className="w-full p-2 border rounded">
+                    <option value="">New customer</option>
+                    {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input placeholder="Full Name *" value={customerName} onChange={e => setCustomerName(e.target.value)} className="w-full p-2 border rounded" required />
+                  <input placeholder="NRC Number" value={nrcNumber} onChange={e => setNrcNumber(e.target.value)} className="w-full p-2 border rounded" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input placeholder="Phone" value={phone} onChange={e => setPhone(e.target.value)} className="w-full p-2 border rounded" />
+                  <input placeholder="Location" value={location} onChange={e => setLocation(e.target.value)} className="w-full p-2 border rounded" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-sm mb-1">Installments</label>
+                    <input type="number" min="1" value={installments} onChange={e => setInstallments(parseInt(e.target.value) || 1)} className="w-full p-2 border rounded" />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">Due Date</label>
+                    <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="w-full p-2 border rounded" />
+                  </div>
+                </div>
+                <div className="text-xs text-gray-500">
+                  Suggested installment: {currency}{suggestedInstallment}
+                </div>
+                <div className="max-h-40 overflow-y-auto">
+                  {cart.map(item => (
+                    <div key={item.id} className="flex items-center justify-between py-1 border-b">
+                      <span className="text-sm truncate flex-1">{item.name}</span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => updateCartQty(item.id, -1)} className="p-0.5 bg-gray-200 rounded"><X size={12}/></button>
+                        <span className="w-6 text-center text-sm">{item.quantity}</span>
+                        <button onClick={() => updateCartQty(item.id, 1)} className="p-0.5 bg-gray-200 rounded">+</button>
+                      </div>
+                      <span className="text-sm w-16 text-right">{currency}{(item.quantity * item.unit_price).toFixed(2)}</span>
+                      <button onClick={() => removeFromCart(item.id)} className="p-0.5 text-red-500"><Trash2 size={14}/></button>
+                    </div>
+                  ))}
+                </div>
+                <div className="font-bold text-lg">Total: {currency}{cartTotal.toFixed(2)}</div>
+                <input type="number" placeholder="Deposit" value={deposit} onChange={e => setDeposit(e.target.value)} className="w-full p-2 border rounded" />
+                <button onClick={handleCreateLayby} className="w-full bg-green-600 text-white py-2 rounded">Create Lay‑by</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Modal */}
+      {showPayment && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-sm">
+            <div className="p-4 border-b flex justify-between"><h2 className="text-lg font-bold">Add Payment</h2><button onClick={() => setShowPayment(null)}><X/></button></div>
+            <form onSubmit={handleAddPayment} className="p-4 space-y-4">
+              {(() => { const layby = laybys.find(l => l.id === showPayment); const remaining = layby ? layby.total_amount - layby.deposit_amount : 0; return (<p className="text-sm">Remaining: <span className="font-bold">{currency}{remaining.toFixed(2)}</span></p>); })()}
+              <input type="number" step="0.01" placeholder="Amount" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} className="w-full p-2 border rounded" required />
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setShowPayment(null)} className="flex-1 py-2 border rounded">Cancel</button>
+                <button type="submit" className="flex-1 py-2 bg-blue-600 text-white rounded">Record Payment</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

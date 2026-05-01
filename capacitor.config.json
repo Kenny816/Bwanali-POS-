@@ -1,0 +1,6 @@
+{
+  "appId": "com.bwanali.pos",
+  "appName": "Bwanali POS",
+  "webDir": "build",
+  "bundledWebRuntime": false
+}

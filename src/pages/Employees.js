@@ -92,15 +92,6 @@ export default function Employees() {
       });
       if (signUpError) throw new Error(signUpError.message);
 
-      await supabase.from('staff').insert({
-        full_name: form.full_name,
-        email: form.email,
-        phone: form.phone,
-        role: form.role,
-        pin_code: form.pin_code,
-        is_active: true,
-        store_id: storeId,
-      });
 
       toast.success('Employee created for this store');
       setShowModal(false);

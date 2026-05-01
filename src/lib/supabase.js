@@ -33,7 +33,7 @@ if (!load('staff').length) {
     receipt_header: '', logo_url: '',
   }]);
   save('customers', []); save('sales', []); save('sale_items', []);
-  save('cash_shifts', []); save('discount_rules', []); save('returns', []);
+  save('cash_shifts', []); save([]); save('returns', []);
   save('laybys', []); save('store_admins', []);
   save('stock_transfers', []);
 }
@@ -53,6 +53,7 @@ function queryBuilder(table) {
         if (f.type === 'not') return r[f.col] !== f.val;
         if (f.type === 'is') return r[f.col] === null || r[f.col] === undefined;
         if (f.type === 'in') return f.vals.includes(r[f.col]);
+        if (f.type === 'or') {          return f.conditions.some(cond => {            if (cond.op === 'eq') return r[cond.col] === cond.val;            if (cond.op === 'gte') return new Date(r[cond.col]) >= new Date(cond.val);            if (cond.op === 'lte') return new Date(r[cond.col]) <= new Date(cond.val);            return true;          });        }
         return true;
       } catch { return false; }
     }));
@@ -72,6 +73,7 @@ function queryBuilder(table) {
     not: (col, val) => { filters.push({ type: 'not', col, val }); return builder; },
     is: (col, val) => { filters.push({ type: 'is', col, val }); return builder; },
     in: (col, vals) => { filters.push({ type: 'in', col, vals }); return builder; },
+      or: (filterStr) => {        const parts = filterStr.split(',').map(s => s.trim());        filters.push({          type: 'or',          conditions: parts.map(part => {            const [col, op, ...rest] = part.split('.');            const val = rest.join('.');            return { col, op: op || 'eq', val };          })        });        return builder;      },
     order: (col, opts) => { orderCol = col; orderAsc = opts?.ascending !== false; return builder; },
     limit: (n) => { limitVal = n; return builder; },
     single: () => { singleMode = true; return builder; },
@@ -131,7 +133,7 @@ function findUser(email, password) {
 }
 
 // Sync helpers
-const tables = ['stores','staff','products','sales','sale_items','cash_shifts','discount_rules','returns','company_settings','customers','laybys','store_admins','stock_transfers'];
+const tables = ['stores','staff','products','sales','sale_items','cash_shifts',,'returns','company_settings','customers','laybys','store_admins','stock_transfers'];
 
 async function trySync(t) {
   if (!navigator.onLine) return;
@@ -263,7 +265,7 @@ export const supabase = {
       /* ----- FIXED LINE: EVERY SIGN-UP BECOMES ADMIN ----- */
       const role = options?.data?.role || 'admin';
       /* ------------------------------------------------ */
-      let storeId = currentUser?.store_id;
+      let storeId = options?.data?.store_id || currentUser?.store_id;
       if (!storeId || isFirstUser) {
         storeId = id();
         const storeName = options?.data?.full_name ? `${options.data.full_name}'s Store` : 'My Store';

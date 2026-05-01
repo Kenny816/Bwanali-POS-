@@ -106,7 +106,6 @@ export default function Layout() {
     '/app/returns': 'Returns',
     '/app/return-history': 'Return History',
     '/app/settings': 'Settings',
-    '/app/discounts': 'Discounts',
     '/app/profile': 'Profile',
     '/app/layby': 'Lay‑by',
     '/app/invoices': 'Invoices',

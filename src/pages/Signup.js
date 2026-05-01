@@ -1,3 +1,4 @@
+import { hashString } from '../lib/crypto';
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import toast from 'react-hot-toast';
@@ -9,6 +10,7 @@ export default function Signup() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [plan, setPlan] = useState('monthly');
+  const [recoveryKey, setRecoveryKey] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSignup = async (e) => {
@@ -31,6 +33,7 @@ export default function Signup() {
       });
       if (error) throw error;
       toast.success('Account created! You are now logged in.');
+if (recoveryKey) {        try {          const hash = await hashString(recoveryKey);          const { data: user } = await supabase.auth.getSession();          if (user?.user?.id) {            await supabase.from('staff').update({ recovery_key_hash: hash }).eq('id', user.user.id);          }        } catch (e) { console.error('Failed to save recovery key', e); }      }
       window.location.href = '/app';
     } catch (err) {
       toast.error(err.message);
