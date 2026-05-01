@@ -24,76 +24,75 @@ export function AuthProvider({ children }) {
     setUser(parsed);
 
     try {
+      // Load all stores owned by this admin via store_admins
+      const allAdmins = JSON.parse(localStorage.getItem('bwanali_store_admins') || '[]');
+      const adminEntries = allAdmins.filter(a => a.user_id === parsed.id || a.user_id === parsed.email);
       const allStores = JSON.parse(localStorage.getItem('bwanali_stores') || '[]');
-      const allStaff = JSON.parse(localStorage.getItem('bwanali_staff') || '[]');
-
-      // Find all staff records for this user's email
-      const myStaffRecords = allStaff.filter(s => s.email === parsed.email);
-      const managedStoreIds = myStaffRecords.map(s => s.store_id);
-      // Also include stores where the user is admin in store_admins
-      const storeAdmins = JSON.parse(localStorage.getItem('bwanali_store_admins') || '[]');
-      const adminStoreIds = storeAdmins.filter(a => a.user_id === parsed.id).map(a => a.store_id);
-      const allManagedIds = [...new Set([...managedStoreIds, ...adminStoreIds])];
-
-      // If parsed.store_id is set, ensure it's included
-      if (parsed.store_id && !allManagedIds.includes(parsed.store_id)) {
-        allManagedIds.push(parsed.store_id);
-      }
-
-      const managedStores = allStores.filter(s => allManagedIds.includes(s.id));
       
-      if (managedStores.length === 0) {
-        // Fallback: if no managed stores found, but parsed has a store_id, just use that
-        const fallbackStore = allStores.find(s => s.id === parsed.store_id);
-        if (fallbackStore) {
-          managedStores.push(fallbackStore);
-        } else {
-          // No stores at all – sign out
-          localStorage.removeItem('local_user');
-          setUser(null); setStaff(null); setActiveStoreId(null);
-          setAvailableStores([]); setLoading(false);
-          return;
-        }
+      // Get the store IDs the admin is linked to
+      const adminStoreIds = new Set(adminEntries.map(a => a.store_id));
+      
+      // Also include the store from the user's own staff record (in case store_admin entry is missing)
+      if (parsed.store_id) adminStoreIds.add(parsed.store_id);
+      
+      const userStores = allStores.filter(s => adminStoreIds.has(s.id));
+      
+      // If no stores found, fallback to the user's own store from staff record
+      if (userStores.length === 0 && parsed.store_id) {
+        const userStore = allStores.find(s => s.id === parsed.store_id);
+        if (userStore) userStores.push(userStore);
       }
+      
+      // If still zero, create a default store (should not happen normally)
+      if (userStores.length === 0) {
+        const newStoreId = 'store-' + Date.now().toString(36);
+        const defaultStore = {
+          id: newStoreId,
+          name: parsed.full_name ? `${parsed.full_name}'s Store` : 'My Store',
+          subscription_status: 'trialing',
+          trial_started_at: new Date().toISOString(),
+          subscription_plan: 'monthly',
+          locked: false,
+        };
+        saveStores([...allStores, defaultStore]);
+        userStores.push(defaultStore);
+        // also create store_admin entry
+        const newAdmins = [...allAdmins, { user_id: parsed.id, store_id: newStoreId }];
+        localStorage.setItem('bwanali_store_admins', JSON.stringify(newAdmins));
+      }
+      
+      setAvailableStores(userStores);
 
-      setAvailableStores(managedStores);
-
-      // Active store: prefer saved one, else first managed
-      const savedActiveId = localStorage.getItem(`activeStore_${parsed.id}`);
-      const activeId = (savedActiveId && managedStores.find(s => s.id === savedActiveId)) 
-                        ? savedActiveId 
-                        : managedStores[0].id;
+      // Determine active store (saved preference or first)
+      const savedStoreId = localStorage.getItem(`activeStore_${parsed.id}`);
+      const activeId = savedStoreId && userStores.find(s => s.id === savedStoreId)
+        ? savedStoreId
+        : userStores[0].id;
       setActiveStoreId(activeId);
-      localStorage.setItem(`activeStore_${parsed.id}`, activeId);
 
-      // Current staff record for the active store
-      const currentStaffRecord = myStaffRecords.find(s => s.store_id === activeId);
-      const userStore = managedStores.find(s => s.id === activeId);
       const staffMember = {
         ...parsed,
-        id: currentStaffRecord?.id,
-        full_name: currentStaffRecord?.full_name || parsed.full_name || 'User',
-        role: currentStaffRecord?.role || parsed.role || 'admin',
-        is_active: currentStaffRecord?.is_active !== false,
-        store: userStore,
-        store_id: activeId,
-        pin_code: currentStaffRecord?.pin_code || null,
+        full_name: parsed.full_name || 'User',
+        role: parsed.role || 'admin',
+        is_active: parsed.is_active !== false,
+        store: userStores.find(s => s.id === activeId) || userStores[0],
+        is_inventory_manager: parsed.is_inventory_manager ?? true,
       };
       setStaff(staffMember);
 
-      // Subscription status from active store
-      const store = userStore || managedStores[0];
-      if (store) {
-        if (store.subscription_status === 'trialing' && store.trial_started_at) {
-          const trialEnd = new Date(store.trial_started_at);
+      const currentStore = userStores.find(s => s.id === activeId) || userStores[0];
+      if (currentStore) {
+        // Trial expiry check
+        if (currentStore.subscription_status === 'trialing' && currentStore.trial_started_at) {
+          const trialEnd = new Date(currentStore.trial_started_at);
           trialEnd.setDate(trialEnd.getDate() + 3);
           const now = new Date();
           const left = Math.max(0, Math.ceil((trialEnd - now) / 86400000));
           setTrialDaysLeft(left);
           if (left === 0) {
-            store.subscription_status = 'expired';
-            store.locked = true;
-            const updatedStores = allStores.map(s => s.id === store.id ? store : s);
+            currentStore.subscription_status = 'expired';
+            currentStore.locked = true;
+            const updatedStores = allStores.map(s => s.id === currentStore.id ? currentStore : s);
             localStorage.setItem('bwanali_stores', JSON.stringify(updatedStores));
             setSubscriptionStatus('expired');
             setIsLocked(true);
@@ -101,12 +100,18 @@ export function AuthProvider({ children }) {
             return;
           }
         }
-        setSubscriptionStatus(store.subscription_status || 'trialing');
-        setIsLocked(store.locked || false);
+        setSubscriptionStatus(currentStore.subscription_status || 'trialing');
+        setIsLocked(currentStore.locked || false);
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
+
+  // Helper to save stores and dispatch event
+  const saveStores = (stores) => {
+    localStorage.setItem('bwanali_stores', JSON.stringify(stores));
+    window.dispatchEvent(new CustomEvent('db-change'));
+  };
 
   useEffect(() => {
     loadUser();
@@ -120,11 +125,12 @@ export function AuthProvider({ children }) {
     };
   }, [loadUser]);
 
-  const switchStore = (id) => {
-    if (!user) return;
-    localStorage.setItem(`activeStore_${user.id}`, id);
-    loadUser();
-  };
+  const switchStore = useCallback((storeId) => {
+    if (!user?.id) return;
+    setActiveStoreId(storeId);
+    localStorage.setItem(`activeStore_${user.id}`, storeId);
+    loadUser(); // re-fetch
+  }, [user, loadUser]);
 
   const checkSubscription = useCallback(async (storeId) => {
     const allStores = JSON.parse(localStorage.getItem('bwanali_stores') || '[]');
@@ -149,16 +155,16 @@ export function AuthProvider({ children }) {
   const role = staff?.role;
   const isAdmin = role === 'admin';
   const isManager = role === 'manager' || isAdmin;
+  const canManageInventory = isAdmin || isManager || (staff?.is_inventory_manager === true);
   const hasActive = subscriptionStatus === 'active' || (subscriptionStatus === 'trialing' && !isLocked);
 
   return (
     <AuthContext.Provider
       value={{
         user, staff, setStaff, storeId: activeStoreId, availableStores,
-        switchStore,
-        signIn, signOut, loading,
+        switchStore, signIn, signOut, loading,
         isAdmin, isManager,
-        canManageInventory: isAdmin || role === 'manager',
+        canManageInventory,
         canDelete: isAdmin,
         subscriptionStatus, trialDaysLeft,
         hasActiveSubscription: hasActive,

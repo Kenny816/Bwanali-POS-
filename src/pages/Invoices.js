@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
-import { FileText, Plus, Search, X, Printer, Download, Eye, Trash2, User, Phone, MapPin } from 'lucide-react';
+import { FileText, Plus, Search, X, Printer, Download, Trash2, User, Phone, MapPin } from 'lucide-react';
 
 export default function Invoices() {
   const { staff, storeId } = useAuth();
@@ -30,18 +30,18 @@ export default function Invoices() {
       .select('*, staff:staff(full_name)')
       .eq('store_id', storeId)
       .order('created_at', { ascending: false });
-    setInvoices(data || []);
+    setInvoices(data?.data || data || []);
     setLoading(false);
   }, [storeId]);
 
   const loadCustomers = async () => {
     const { data } = await supabase.from('customers').select('id,name,phone').eq('store_id', storeId).order('name');
-    setCustomers(data || []);
+    setCustomers(data?.data || data || []);
   };
 
   const loadProducts = async () => {
     const { data } = await supabase.from('products').select('*').eq('store_id', storeId).eq('is_active', true).order('name');
-    setProducts(data || []);
+    setProducts(data?.data || data || []);
   };
 
   useEffect(() => {
@@ -108,7 +108,6 @@ export default function Invoices() {
         unit_price: i.unit_price,
       }));
       await supabase.from('invoice_items').insert(items);
-      // Do not decrement stock for invoices
 
       toast.success('Invoice created');
       setShowCreate(false);
@@ -192,11 +191,9 @@ ${'='.repeat(40)}
     <div className="p-4 h-full overflow-y-auto">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6">
         <h1 className="text-2xl font-bold"><FileText className="inline mr-2" />Invoices</h1>
-        {isAdmin && (
-          <button onClick={() => setShowCreate(true)} className="w-full sm:w-auto bg-green-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2">
-            <Plus size={18} /> New Invoice
-          </button>
-        )}
+        <button onClick={() => setShowCreate(true)} className="w-full sm:w-auto bg-green-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2">
+          <Plus size={18} /> New Invoice
+        </button>
       </div>
 
       <div className="mb-4 relative">

@@ -6,13 +6,36 @@ const realClient = createClient(supabaseUrl, supabaseAnonKey);
 
 const id = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
 
-function load(table) {
-  try { return JSON.parse(localStorage.getItem('bwanali_' + table) || '[]'); } catch { return []; }
+function load(t) {
+  try { return JSON.parse(localStorage.getItem('bwanali_' + t) || '[]'); } catch { return []; }
 }
-function save(table, rows) {
-  localStorage.setItem('bwanali_' + table, JSON.stringify(rows));
-  window.dispatchEvent(new CustomEvent('db-change', { detail: { table } }));
-  trySync(table);
+function save(t, rows) {
+  localStorage.setItem('bwanali_' + t, JSON.stringify(rows));
+  window.dispatchEvent(new CustomEvent('db-change', { detail: { table: t } }));
+  trySync(t);
+}
+
+// --- Default admin seed ---
+if (!load('staff').length) {
+  const storeId = id();
+  save('stores', [{
+    id: storeId, name: 'My Store', subscription_status: 'trialing',
+    trial_started_at: new Date().toISOString(), subscription_plan: 'monthly', locked: false,
+  }]);
+  save('staff', [{
+    id: id(), email: 'admin@bwanali.com', password: 'admin123', pin_code: '1234',
+    full_name: 'Store Owner', role: 'admin', is_active: true, store_id: storeId,
+    is_inventory_manager: true,
+  }]);
+  save('company_settings', [{
+    id: id(), store_id: storeId, company_name: 'My Store', local_currency: 'ZMW',
+    receipt_footer: 'Thank you for your business!', currency_symbol: 'K',
+    receipt_header: '', logo_url: '',
+  }]);
+  save('customers', []); save('sales', []); save('sale_items', []);
+  save('cash_shifts', []); save('discount_rules', []); save('returns', []);
+  save('laybys', []); save('store_admins', []);
+  save('stock_transfers', []);
 }
 
 // ---------- Query builder ----------
@@ -102,14 +125,13 @@ function dbUpsert(table, payload) {
   return { error: null, then: (r) => r({ error: null }), catch: () => {} };
 }
 
-// ---------- Auth helpers ----------
+// ---------- Auth ----------
 function findUser(email, password) {
-  const staff = load('staff');
-  return staff.find(u => u.email === email && (u.password === password || u.pin_code === password));
+  return load('staff').find(u => u.email === email && (u.password === password || u.pin_code === password));
 }
 
-// ---------- Sync helpers ----------
-const tables = ['stores','staff','products','sales','sale_items','cash_shifts','discount_rules','returns','company_settings','customers','laybys','store_admins'];
+// Sync helpers
+const tables = ['stores','staff','products','sales','sale_items','cash_shifts','discount_rules','returns','company_settings','customers','laybys','store_admins','stock_transfers'];
 
 async function trySync(t) {
   if (!navigator.onLine) return;
@@ -132,16 +154,9 @@ async function pullAll() {
         if (!merged[r.id]) merged[r.id] = r;
         else if (!merged[r.id].created_at || new Date(r.created_at) > new Date(merged[r.id].created_at)) merged[r.id] = r;
       });
-
-      // Ensure staff records have a 'password' field (copy from pin_code if needed)
       if (t === 'staff') {
-        Object.values(merged).forEach(record => {
-          if (record.pin_code && !record.password) {
-            record.password = record.pin_code;
-          }
-        });
+        Object.values(merged).forEach(record => { if (record.pin_code && !record.password) record.password = record.pin_code; });
       }
-
       save(t, Object.values(merged));
     } catch {}
   }
@@ -170,20 +185,10 @@ function startStoreSync() {
   }, 60000);
 }
 
-window.addEventListener('online', () => {
-  pullAll();
-  startStoreSync();
-});
-window.addEventListener('offline', () => {
-  if (storeSyncInterval) clearInterval(storeSyncInterval);
-});
+window.addEventListener('online', () => { pullAll(); startStoreSync(); });
+window.addEventListener('offline', () => { if (storeSyncInterval) clearInterval(storeSyncInterval); });
 
-if (navigator.onLine) {
-  setTimeout(() => {
-    pullAll();
-    startStoreSync();
-  }, 2000);
-}
+if (navigator.onLine) { setTimeout(() => { pullAll(); startStoreSync(); }, 2000); }
 
 // ---------- The exported supabase ----------
 export const supabase = {
@@ -199,14 +204,19 @@ export const supabase = {
   }),
   auth: {
     signInWithPassword: async ({ email, password }) => {
-      // Try online first
+      const user = findUser(email, password);
+      if (user) {
+        localStorage.setItem('local_user', JSON.stringify(user));
+        window.dispatchEvent(new Event('auth-change'));
+        if (navigator.onLine) await syncStoreFromCloud(user.store_id);
+        return { data: { user }, error: null };
+      }
       if (navigator.onLine) {
         try {
           const { data, error } = await realClient.auth.signInWithPassword({ email, password });
           if (!error && data?.user) {
-            // Store user locally, and ensure local staff record exists
-            const user = data.user;
-            const metadata = user.user_metadata || {};
+            const onlineUser = data.user;
+            const metadata = onlineUser.user_metadata || {};
             const storeId = metadata.store_id;
             const staffList = load('staff');
             const existingStaff = staffList.find(s => s.email === email);
@@ -218,25 +228,17 @@ export const supabase = {
               };
               save('staff', [...staffList, newStaff]);
             } else {
-              // Update password locally
               const updated = staffList.map(s => s.email === email ? { ...s, password, pin_code: password } : s);
               save('staff', updated);
             }
-            localStorage.setItem('local_user', JSON.stringify({ ...user, store_id: storeId }));
+            localStorage.setItem('local_user', JSON.stringify({ ...onlineUser, store_id: storeId }));
             window.dispatchEvent(new Event('auth-change'));
             if (storeId) await syncStoreFromCloud(storeId);
-            return { data: { user }, error: null };
+            return { data: { user: onlineUser }, error: null };
           }
         } catch {}
       }
-
-      // Offline fallback
-      const user = findUser(email, password);
-      if (!user) return { error: { message: 'Invalid credentials' } };
-      localStorage.setItem('local_user', JSON.stringify(user));
-      window.dispatchEvent(new Event('auth-change'));
-      if (navigator.onLine) await syncStoreFromCloud(user.store_id);
-      return { data: { user }, error: null };
+      return { error: { message: 'Invalid credentials' } };
     },
     signOut: async () => { localStorage.removeItem('local_user'); return { error: null }; },
     getSession: async () => {
@@ -248,60 +250,43 @@ export const supabase = {
         const user = JSON.parse(localStorage.getItem('local_user') || 'null');
         cb('SIGNED_IN', { user });
       };
-      window.addEventListener('auth-change', handler);
-      handler();
+      window.addEventListener('auth-change', handler); handler();
       return { data: { subscription: { unsubscribe: () => window.removeEventListener('auth-change', handler) } } };
     },
     setSession: async () => ({ error: null }),
     signUp: async ({ email, password, options }) => {
-      // Try online first
-      if (navigator.onLine) {
-        try {
-          const { data, error } = await realClient.auth.signUp({ email, password });
-          if (!error && data?.user) {
-            const storeId = id();
-            const storeName = options?.data?.full_name ? `${options.data.full_name}'s Store` : 'My Store';
-            // Create store & settings in cloud later, but also locally
-            const newStore = {
-              id: storeId, name: storeName, subscription_status: 'trialing',
-              trial_started_at: new Date().toISOString(), subscription_plan: 'monthly', locked: false,
-            };
-            save('stores', [...load('stores'), newStore]);
-            const settings = { id: id(), store_id: storeId, company_name: storeName, local_currency: 'ZMW', receipt_footer: 'Thank you!' };
-            save('company_settings', [...load('company_settings'), settings]);
-            const newUser = {
-              id: id(), email, password, pin_code: password,
-              full_name: options?.data?.full_name || 'Store Owner',
-              role: 'admin', is_active: true, store_id: storeId,
-            };
-            save('staff', [...load('staff'), newUser]);
-            localStorage.setItem('local_user', JSON.stringify(newUser));
-            window.dispatchEvent(new Event('auth-change'));
-            return { data: { user: newUser }, error: null };
-          }
-        } catch {}
-      }
-
-      // Offline signup
       const staff = load('staff');
       if (staff.find(u => u.email === email)) return { error: { message: 'Email already registered' } };
-      const storeId = id();
-      const storeName = options?.data?.full_name ? `${options.data.full_name}'s Store` : 'My Store';
-      const newStore = {
-        id: storeId, name: storeName, subscription_status: 'trialing',
-        trial_started_at: new Date().toISOString(), subscription_plan: 'monthly', locked: false,
-      };
-      save('stores', [...load('stores'), newStore]);
-      const settings = { id: id(), store_id: storeId, company_name: storeName, local_currency: 'ZMW', receipt_footer: 'Thank you!' };
-      save('company_settings', [...load('company_settings'), settings]);
+
+      const currentUser = JSON.parse(localStorage.getItem('local_user') || 'null');
+      const isFirstUser = staff.length === 0;
+      /* ----- FIXED LINE: EVERY SIGN-UP BECOMES ADMIN ----- */
+      const role = options?.data?.role || 'admin';
+      /* ------------------------------------------------ */
+      let storeId = currentUser?.store_id;
+      if (!storeId || isFirstUser) {
+        storeId = id();
+        const storeName = options?.data?.full_name ? `${options.data.full_name}'s Store` : 'My Store';
+        save('stores', [...load('stores'), {
+          id: storeId, name: storeName, subscription_status: 'trialing',
+          trial_started_at: new Date().toISOString(), subscription_plan: options?.data?.plan || 'monthly', locked: false,
+        }]);
+        save('company_settings', [...load('company_settings'), {
+          id: id(), store_id: storeId, company_name: storeName, local_currency: 'ZMW',
+          receipt_footer: 'Thank you!', currency_symbol: 'K', receipt_header: '', logo_url: '',
+        }]);
+      }
       const newUser = {
         id: id(), email, password, pin_code: password,
         full_name: options?.data?.full_name || 'Store Owner',
-        role: 'admin', is_active: true, store_id: storeId,
+        role, is_active: true, store_id: storeId,
+        is_inventory_manager: true,   // admin has inventory access
       };
       save('staff', [...staff, newUser]);
-      localStorage.setItem('local_user', JSON.stringify(newUser));
-      window.dispatchEvent(new Event('auth-change'));
+      if (isFirstUser) {
+        localStorage.setItem('local_user', JSON.stringify(newUser));
+        window.dispatchEvent(new Event('auth-change'));
+      }
       return { data: { user: newUser }, error: null };
     },
   },

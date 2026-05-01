@@ -13,6 +13,7 @@ export default function Settings() {
     isLocked, checkSubscription, user, reloadStaff
   } = useAuth();
 
+  // Subscription
   const [subscriptionEnd, setSubscriptionEnd] = useState(null);
   const [now, setNow] = useState(new Date());
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -20,6 +21,7 @@ export default function Settings() {
   const [sending, setSending] = useState(false);
   const [billingCycle, setBillingCycle] = useState('monthly');
 
+  // Company settings
   const [selectedStoreId, setSelectedStoreId] = useState(storeId);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({
@@ -30,6 +32,7 @@ export default function Settings() {
     email: '',
     business_mobile_money_number: '',
     local_currency: 'ZMW',
+    receipt_header: '',
     receipt_footer: 'Thank you for your business!',
     vat_registered: false,
     vat_rate: '16',
@@ -40,21 +43,25 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [logoFile, setLogoFile] = useState(null);
   const [uploading, setUploading] = useState(false);
+
+  // New store modal
   const [showNewStoreModal, setShowNewStoreModal] = useState(false);
   const [newStoreName, setNewStoreName] = useState('');
 
   const isAdmin = staff?.role === 'admin';
   const storeCount = availableStores?.length || 0;
 
-  // Pricing: 150/month per store, 1500/year per store
+  // Pricing
   const monthlyPrice = 150 * storeCount;
   const annualPrice = 1500 * storeCount;
   const paymentAmount = billingCycle === 'monthly' ? monthlyPrice : annualPrice;
   const currency = form.local_currency || 'ZMW';
   const businessNumber = form.business_mobile_money_number || '097XXXXXXX';
 
+  // Timer
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(timer); }, []);
 
+  // Load settings for selected store
   useEffect(() => {
     if (!selectedStoreId || !isAdmin) return;
     const load = async () => {
@@ -67,6 +74,7 @@ export default function Settings() {
     load();
   }, [selectedStoreId, isAdmin]);
 
+  // Subscription end date
   useEffect(() => {
     if (availableStores?.length > 0) {
       const end = availableStores[0]?.subscription_end_date;
@@ -74,6 +82,7 @@ export default function Settings() {
     }
   }, [availableStores]);
 
+  // Logo upload
   const handleLogoUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -103,7 +112,7 @@ export default function Settings() {
     try { setSmsText(await navigator.clipboard.readText()); toast.success('Pasted'); } catch { toast.error('Cannot access clipboard'); }
   };
 
-  // Submit SMS for verification (monthly or annual)
+  // Submit SMS for verification
   const handleSubmitForVerification = async (e) => {
     e.preventDefault();
     if (!smsText.trim()) return toast.error('Paste SMS');
@@ -184,7 +193,7 @@ export default function Settings() {
           {subscriptionStatus === 'trialing' && <Clock className="text-blue-600" size={20} />}
           {subscriptionStatus === 'expired' && <AlertTriangle className="text-red-600" size={20} />}
           <span className={`font-semibold ${subscriptionStatus === 'active' ? 'text-green-700' : subscriptionStatus === 'trialing' ? 'text-blue-700' : 'text-red-700'}`}>
-            {subscriptionStatus === 'active' ? 'Active' : subscriptionStatus === 'trialing' ? `Trial — ${trialDaysLeft} day${trialDaysLeft !== 1 ? 's' : ''} left` : subscriptionStatus === 'expired' ? 'Expired' : 'Pending'}
+            {subscriptionStatus === 'active' ? 'Active' : subscriptionStatus === 'trialing' ? `Trial — ${trialDaysLeft} day${trialDaysLeft !== 1 ? 's' : ''} left` : 'Expired'}
           </span>
         </div>
         {subscriptionStatus === 'active' && timeLeftInfo && (
@@ -237,12 +246,22 @@ export default function Settings() {
             <input placeholder="Address" value={form.address} onChange={e => setForm({...form, address: e.target.value})} className="w-full p-2 border rounded" />
             <input placeholder="Phone" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} className="w-full p-2 border rounded" />
             <input placeholder="Email" value={form.email} onChange={e => setForm({...form, email: e.target.value})} className="w-full p-2 border rounded" />
+
+            {/* Receipt Customisation */}
             <div className="border-t pt-4">
-              <h3 className="font-medium mb-2">Receipt & Tax</h3>
-              <input placeholder="Receipt Footer" value={form.receipt_footer} onChange={e => setForm({...form, receipt_footer: e.target.value})} className="w-full p-2 border rounded mb-2" />
+              <h3 className="font-medium mb-2">Receipt Customisation</h3>
+              <label className="block text-sm mb-1">Header Line (appears at top)</label>
+              <input placeholder="e.g., Address, phone" value={form.receipt_header} onChange={e => setForm({...form, receipt_header: e.target.value})} className="w-full p-2 border rounded mb-2" />
+              <label className="block text-sm mb-1">Footer Line</label>
+              <input placeholder="Thank you!" value={form.receipt_footer} onChange={e => setForm({...form, receipt_footer: e.target.value})} className="w-full p-2 border rounded" />
+            </div>
+
+            <div className="border-t pt-4">
+              <h3 className="font-medium mb-2">Tax Settings</h3>
               <label className="flex items-center gap-2 mb-2"><input type="checkbox" checked={form.vat_registered} onChange={e => setForm({...form, vat_registered: e.target.checked})} /> VAT Registered</label>
               {form.vat_registered && <input type="number" step="0.1" placeholder="VAT Rate (%)" value={form.vat_rate} onChange={e => setForm({...form, vat_rate: e.target.value})} className="w-full p-2 border rounded" />}
             </div>
+
             <div className="border-t pt-4">
               <h3 className="font-medium mb-2 flex items-center gap-1"><Camera size={16} /> Barcode Scanner</h3>
               <select value={form.hardware_scanner} onChange={e => setForm({...form, hardware_scanner: e.target.value})} className="w-full p-2 border rounded">
@@ -251,17 +270,20 @@ export default function Settings() {
                 <option value="usb">USB Scanner</option>
               </select>
             </div>
+
             <div className="border-t pt-4">
               <h3 className="font-medium mb-2">Inventory Alerts</h3>
               <label className="text-sm text-gray-500 mb-1 block">Low Stock Threshold</label>
               <input type="number" min="0" step="1" value={form.low_stock_threshold} onChange={e => setForm({...form, low_stock_threshold: e.target.value})} className="w-full p-2 border rounded" />
               <p className="text-xs text-gray-400 mt-1">Products with stock ≤ this value will be shown on the Dashboard.</p>
             </div>
+
             <div className="border-t pt-4">
               <h3 className="font-medium mb-2 flex items-center gap-1"><Smartphone size={16} /> Mobile Money Settings</h3>
               <input placeholder="Business Number" value={form.business_mobile_money_number} onChange={e => setForm({...form, business_mobile_money_number: e.target.value})} className="w-full p-2 border rounded mb-2" />
               <input placeholder="Currency (ZMW)" value={form.local_currency} onChange={e => setForm({...form, local_currency: e.target.value})} className="w-full p-2 border rounded" />
             </div>
+
             <button type="submit" disabled={saving} className="w-full bg-green-600 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2 hover:bg-green-700">
               <Save size={18} /> {saving ? 'Saving...' : 'Save Settings'}
             </button>
@@ -269,12 +291,12 @@ export default function Settings() {
         </div>
       )}
 
-      {/* Payment Modal – Monthly / Annual choice */}
+      {/* Payment Modal */}
       {showPaymentModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl w-full max-w-md">
             <div className="p-4 border-b"><h2 className="text-xl font-bold">Subscribe</h2></div>
-            <div className="p-4 space-y-4">
+            <div className="p-4 space-y-4 overflow-y-auto max-h-[70vh]">
               <div className="bg-blue-50 p-3 rounded">
                 <p className="font-medium">{storeCount} Store{storeCount !== 1 ? 's' : ''}</p>
                 <p className="text-sm mt-1">Monthly: ZMW {monthlyPrice} | Annual: ZMW {annualPrice}</p>
@@ -282,14 +304,8 @@ export default function Settings() {
               <div>
                 <label className="block text-sm font-medium mb-2">Choose Billing Cycle</label>
                 <div className="flex gap-4">
-                  <label className="flex items-center gap-1 cursor-pointer">
-                    <input type="radio" name="billingCycle" value="monthly" checked={billingCycle === 'monthly'} onChange={() => setBillingCycle('monthly')} />
-                    <span>Monthly (ZMW {monthlyPrice})</span>
-                  </label>
-                  <label className="flex items-center gap-1 cursor-pointer">
-                    <input type="radio" name="billingCycle" value="annual" checked={billingCycle === 'annual'} onChange={() => setBillingCycle('annual')} />
-                    <span>Annual (ZMW {annualPrice})</span>
-                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="radio" name="billingCycle" value="monthly" checked={billingCycle === 'monthly'} onChange={() => setBillingCycle('monthly')} /><span>Monthly (ZMW {monthlyPrice})</span></label>
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="radio" name="billingCycle" value="annual" checked={billingCycle === 'annual'} onChange={() => setBillingCycle('annual')} /><span>Annual (ZMW {annualPrice})</span></label>
                 </div>
               </div>
               <div className="bg-yellow-50 p-3 rounded">
@@ -306,18 +322,10 @@ export default function Settings() {
                   <li>A super admin will verify and activate your subscription.</li>
                 </ol>
               </div>
-              <textarea
-                value={smsText}
-                onChange={e => setSmsText(e.target.value)}
-                rows={4}
-                className="w-full p-2 border rounded font-mono text-sm"
-                placeholder="Paste the Airtel Money confirmation SMS..."
-              />
+              <textarea value={smsText} onChange={e => setSmsText(e.target.value)} rows={4} className="w-full p-2 border rounded font-mono text-sm" placeholder="Paste the Airtel Money confirmation SMS..." />
               <div className="flex gap-2">
                 <button onClick={handlePaste} className="px-3 py-1.5 bg-gray-200 rounded flex items-center gap-1"><ClipboardPaste size={14} /> Paste</button>
-                <button onClick={handleSubmitForVerification} disabled={sending} className="flex-1 bg-blue-600 text-white py-1.5 rounded">
-                  {sending ? 'Sending...' : 'Submit for Verification'}
-                </button>
+                <button onClick={handleSubmitForVerification} disabled={sending} className="flex-1 bg-blue-600 text-white py-1.5 rounded">{sending ? 'Sending...' : 'Submit for Verification'}</button>
               </div>
             </div>
             <div className="p-3 border-t flex justify-end"><button onClick={() => setShowPaymentModal(false)} className="px-4 py-1.5 border rounded">Cancel</button></div>

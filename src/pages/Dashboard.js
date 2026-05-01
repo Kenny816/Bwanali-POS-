@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { DollarSign, ShoppingCart, Package, TrendingUp, Clock, Users, BarChart3, Receipt, RotateCcw, Percent, CheckCircle, AlertTriangle, Shield, Tag, AlertOctagon, FileText, UserCheck, Settings } from 'lucide-react';
+import { Truck, DollarSign, ShoppingCart, Package, TrendingUp, Clock, Users, BarChart3, Receipt, RotateCcw, Percent, CheckCircle, AlertTriangle, Shield, Tag, AlertOctagon, FileText, UserCheck, Settings, ArrowRightLeft, CreditCard } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function Dashboard() {
@@ -24,6 +24,9 @@ export default function Dashboard() {
   const [monthSales, setMonthSales] = useState(0);
   const [totalTransactions, setTotalTransactions] = useState(0);
   const [salesChartData, setSalesChartData] = useState([]);
+
+  const [totalCredit, setTotalCredit] = useState(0);
+  const [recentTransfers, setRecentTransfers] = useState([]);
 
   const isCashier = staff?.role === 'cashier';
 
@@ -99,11 +102,28 @@ export default function Dashboard() {
           .eq('is_active', true);
         setActiveCashierCount(staffData?.count || 0);
       }
+
+      if (isAdmin) {
+        const { data: customers } = await supabase.from('customers').select('credit_balance').eq('store_id', storeId);
+        const custData = customers?.data || customers || [];
+        const creditSum = custData.reduce((sum, c) => sum + (parseFloat(c.credit_balance) || 0), 0);
+        setTotalCredit(creditSum);
+      }
+
+      if (isAdmin) {
+        const { data: transfers } = await supabase
+          .from('stock_transfers')
+          .select('*')
+          .or(`from_store_id.eq.${storeId},to_store_id.eq.${storeId}`)
+          .order('created_at', { ascending: false })
+          .limit(5);
+        setRecentTransfers(transfers?.data || transfers || []);
+      }
+
     } catch (err) { console.error(err); }
     finally { setRefreshing(false); }
   }, [storeId, lowStockThreshold, isCashier, staff?.id, isAdmin]);
 
-  // Auto‑refresh when any sale is made (or data changes)
   useEffect(() => {
     fetchAllData();
     const handler = () => fetchAllData();
@@ -128,7 +148,6 @@ export default function Dashboard() {
 
   return (
     <div className="p-4 sm:p-6 max-w-screen-2xl mx-auto">
-      {/* Subscription card – admin only */}
       {isAdmin && (
         <div className="mb-6 bg-white rounded-3xl p-6 shadow-lg border border-gray-100">
           <div className="flex items-center gap-3 mb-4">
@@ -171,24 +190,34 @@ export default function Dashboard() {
         <div className="bg-white rounded-3xl p-6 shadow"><div className="flex justify-between"><div><p className="text-xs text-gray-500">This Month</p><p className="text-2xl font-bold">{currency} {monthSales.toFixed(2)}</p></div><TrendingUp className="w-10 h-10 text-blue-600"/></div></div>
         <div className="bg-white rounded-3xl p-6 shadow"><div className="flex justify-between"><div><p className="text-xs text-gray-500">Transactions</p><p className="text-2xl font-bold">{totalTransactions}</p></div><ShoppingCart className="w-10 h-10 text-purple-600"/></div></div>
         <div className="bg-white rounded-3xl p-6 shadow"><div className="flex justify-between"><div><p className="text-xs text-gray-500">Active Lay By</p><p className="text-2xl font-bold">{activeLaybyCount}</p></div><Package className="w-10 h-10 text-orange-600"/></div></div>
-        {isAdmin && (
-          <div className="bg-white rounded-3xl p-6 shadow"><div className="flex justify-between"><div><p className="text-xs text-gray-500">Active Cashiers</p><p className="text-2xl font-bold">{activeCashierCount}</p></div><UserCheck className="w-10 h-10 text-indigo-600"/></div></div>
-        )}
+        {isAdmin && <div className="bg-white rounded-3xl p-6 shadow"><div className="flex justify-between"><div><p className="text-xs text-gray-500">Active Cashiers</p><p className="text-2xl font-bold">{activeCashierCount}</p></div><UserCheck className="w-10 h-10 text-indigo-600"/></div></div>}
+        {isAdmin && <div className="bg-white rounded-3xl p-6 shadow"><div className="flex justify-between"><div><p className="text-xs text-gray-500">Customer Credit</p><p className="text-2xl font-bold text-blue-600">{currency} {totalCredit.toFixed(2)}</p></div><CreditCard className="w-10 h-10 text-blue-600"/></div></div>}
       </div>
 
-      {/* Quick Access */}
+      {/* Quick Access Buttons */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-8">
         <button onClick={() => navigate('/app/pos')} className="bg-green-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-green-700"><ShoppingCart className="w-8 h-8"/><span>POS</span></button>
         <button onClick={() => navigate('/app/inventory')} className="bg-blue-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-blue-700"><Package className="w-8 h-8"/><span>Inventory</span></button>
         {isAdmin && <button onClick={() => navigate('/app/employees')} className="bg-purple-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-purple-700"><Users className="w-8 h-8"/><span>Employees</span></button>}
-        {isAdmin && <button onClick={() => navigate('/app/discounts')} className="bg-amber-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-amber-700"><Percent className="w-8 h-8"/><span>Discounts</span></button>}
         <button onClick={() => navigate('/app/layby')} className="bg-orange-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-orange-700"><Package className="w-8 h-8"/><span>Lay By</span></button>
         <button onClick={() => navigate('/app/invoices')} className="bg-teal-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-teal-700"><FileText className="w-8 h-8"/><span>Invoices</span></button>
+        <button onClick={() => navigate('/app/customers')} className="bg-indigo-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-indigo-700"><Users className="w-8 h-8"/><span>Customers</span></button>
+        {isAdmin && <button onClick={() => navigate('/app/stock-transfers')} className="bg-teal-700 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-teal-800"><ArrowRightLeft className="w-8 h-8"/><span>Transfers</span></button>}
+        {isAdmin && <button onClick={() => navigate('/app/suppliers')} className="bg-emerald-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-emerald-700"><Truck className="w-8 h-8"/><span>Suppliers</span></button>}
+        {isAdmin && <button onClick={() => navigate('/app/cashier-shifts')} className="bg-pink-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-pink-700"><Users className="w-8 h-8"/><span className="font-medium">Cashier Shifts</span></button>}
         <button onClick={() => navigate('/app/sales')} className="bg-cyan-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-cyan-700"><Receipt className="w-8 h-8"/><span>Sales</span></button>
         {(isAdmin || isManager) && <button onClick={() => navigate('/app/reports')} className="bg-violet-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-violet-700"><BarChart3 className="w-8 h-8"/><span>Reports</span></button>}
         <button onClick={() => navigate('/app/returns')} className="bg-red-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-red-700"><RotateCcw className="w-8 h-8"/><span>Returns</span></button>
-        <button onClick={() => navigate('/app/settings')} className="bg-gray-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-gray-700"><Settings className="w-8 h-8"/><span>Settings</span></button>
+        {isAdmin && <button onClick={() => navigate('/app/settings')} className="bg-gray-600 text-white p-6 rounded-3xl flex flex-col items-center gap-2 hover:bg-gray-700"><Settings className="w-8 h-8"/><span>Settings</span></button>}
       </div>
+
+      {/* Recent Transfers (admin only) */}
+      {isAdmin && recentTransfers.length > 0 && (
+        <div className="bg-white rounded-3xl p-6 shadow mb-8">
+          <div className="flex items-center gap-3 mb-4"><ArrowRightLeft className="w-6 h-6 text-teal-500"/><h2 className="font-semibold">Recent Stock Transfers</h2></div>
+          <div className="space-y-2">{recentTransfers.map(t => (<div key={t.id} className="flex justify-between text-sm border-b pb-1"><span>Product: {t.product_id}</span><span>Qty: {t.quantity}</span><span className="text-xs text-gray-500">{new Date(t.created_at).toLocaleDateString()}</span></div>))}</div>
+        </div>
+      )}
 
       {/* Low Stock */}
       {lowStockProducts.length > 0 && (
@@ -206,23 +235,14 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Sales Trend (real data) */}
+      {/* Sales Trend */}
       <div className="bg-white rounded-3xl p-6 shadow">
         <h2 className="text-xl font-semibold mb-4">Sales Trend (Last 7 Days)</h2>
         {salesChartData.every(d => d.sales === 0) ? (
-          <div className="text-center py-10 text-gray-400">
-            <BarChart3 className="w-10 h-10 mx-auto mb-2 opacity-30" />
-            <p>Make your first sale to see trends</p>
-          </div>
+          <div className="text-center py-10 text-gray-400"><BarChart3 className="w-10 h-10 mx-auto mb-2 opacity-30" /><p>Make your first sale to see trends</p></div>
         ) : (
           <ResponsiveContainer width="100%" height={320}>
-            <LineChart data={salesChartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="day" />
-              <YAxis />
-              <Tooltip formatter={(value) => `${currency} ${value}`} />
-              <Line type="monotone" dataKey="sales" stroke="#10b981" strokeWidth={4} />
-            </LineChart>
+            <LineChart data={salesChartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="day" /><YAxis /><Tooltip formatter={(value) => `${currency} ${value}`} /><Line type="monotone" dataKey="sales" stroke="#10b981" strokeWidth={4} /></LineChart>
           </ResponsiveContainer>
         )}
       </div>

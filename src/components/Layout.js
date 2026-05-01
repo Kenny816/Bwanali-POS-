@@ -1,16 +1,18 @@
-import toast from 'react-hot-toast';
 import React, { useState, useEffect, useRef } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Store, ChevronDown, Plus, UserCircle, LogOut, Lock } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 function StoreSwitcher() {
-  const { availableStores, storeId, switchStore } = useAuth();
+  const { availableStores, storeId, switchStore, isAdmin } = useAuth();
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
 
-  if (!availableStores || availableStores.length <= 1) return null;
+  // Only admins see the switcher
+  if (!isAdmin || !availableStores || availableStores.length <= 1) return null;
+
   const current = availableStores.find(s => s.id === storeId) || availableStores[0];
   return (
     <div className="relative">
@@ -25,13 +27,20 @@ function StoreSwitcher() {
           <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border z-50">
             <div className="p-2">
               {availableStores.map(s => (
-                <button key={s.id} onClick={() => { switchStore(s.id); setOpen(false); }} className={`w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-gray-100 flex justify-between ${s.id === storeId ? 'bg-green-50 text-green-700' : ''}`}>
+                <button
+                  key={s.id}
+                  onClick={() => { switchStore(s.id); setOpen(false); }}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-gray-100 flex justify-between ${s.id === storeId ? 'bg-green-50 text-green-700' : ''}`}
+                >
                   <span className="truncate">{s.name}</span>
                   {s.id === storeId && <span>✓</span>}
                 </button>
               ))}
               <hr className="my-2" />
-              <button onClick={() => { navigate('/app/settings'); setOpen(false); }} className="w-full text-left px-3 py-2 rounded-lg text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2">
+              <button
+                onClick={() => { navigate('/app/settings'); setOpen(false); }}
+                className="w-full text-left px-3 py-2 rounded-lg text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2"
+              >
                 <Plus size={14} /> Add New Store
               </button>
             </div>
@@ -43,7 +52,7 @@ function StoreSwitcher() {
 }
 
 export default function Layout() {
-  const { staff, signOut, storeId, isLocked, checkSubscription, availableStores, switchStore } = useAuth();
+  const { staff, signOut, storeId, isLocked, checkSubscription, availableStores, switchStore, isAdmin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [locked, setLocked] = useState(isLocked);
@@ -60,8 +69,7 @@ export default function Layout() {
         navigate('/app');
       }
     } else if (availableStores && availableStores.length === 0 && storeId) {
-      // No stores left at all
-      navigate('/app/settings'); // or show a message
+      navigate('/app/settings');
     }
   }, [availableStores, storeId, switchStore, navigate]);
 
@@ -77,9 +85,7 @@ export default function Layout() {
             await checkSubscription(storeId);
           }
         }
-      } catch (e) {
-        // ignore
-      }
+      } catch (e) { /* ignore */ }
     };
     check();
     lockInterval.current = setInterval(check, 30000);
@@ -111,6 +117,7 @@ export default function Layout() {
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
       <header className="bg-white shadow-sm border-b px-4 py-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
+          {/* Store name clickable -> Dashboard for everyone */}
           <button onClick={() => navigate('/app')} className="text-lg font-bold text-green-700 truncate hover:underline">
             {staff?.store?.name || 'Bwanali POS'}
           </button>
@@ -118,7 +125,8 @@ export default function Layout() {
           <span className="hidden sm:inline text-sm text-gray-600 truncate">{currentTitle}</span>
         </div>
         <div className="flex items-center gap-3">
-          <StoreSwitcher />
+          {/* Store switcher only for admins */}
+          {isAdmin && <StoreSwitcher />}
           <button onClick={() => navigate('/app/profile')} className="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-gray-100 text-sm">
             <UserCircle size={16} />
             <span className="hidden sm:inline truncate max-w-[100px]">{staff?.full_name}</span>
